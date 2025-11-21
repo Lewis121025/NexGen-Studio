@@ -1,4 +1,4 @@
-"""Configuration models for the Lewis AI System."""
+"""Lewis AI 系统的配置模型。"""
 
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ProviderQuotaSettings(BaseModel):
-    """Rate limits for managed providers."""
+    """托管提供商的速率限制。"""
 
     name: str
-    rpm: int = Field(60, description="Requests per minute throttle")
-    concurrent: int = Field(1, description="Concurrent requests allowed")
+    rpm: int = Field(60, description="每分钟请求数限制")
+    concurrent: int = Field(1, description="允许的并发请求数")
 
 
 class ProviderSettings(BaseModel):
-    """External provider configuration."""
+    """外部提供商配置。"""
 
     name: str
     base_url: AnyHttpUrl | None = None
@@ -42,7 +42,7 @@ class SandboxSettings(BaseModel):
 
 
 class TenantSandboxPolicy(BaseModel):
-    """Per-tenant sandbox resource limits and quotas."""
+    """每个租户的沙箱资源限制和配额。"""
     tenant_id: str
     max_memory_mb: int = 512
     max_cpu_seconds: int = 60
@@ -54,7 +54,7 @@ class TenantSandboxPolicy(BaseModel):
 
 
 class Settings(BaseSettings):
-    """Global application settings."""
+    """全局应用程序设置。"""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -68,26 +68,26 @@ class Settings(BaseSettings):
     sandbox: SandboxSettings = SandboxSettings()
     creative_preview_cost_ratio: float = 0.3
     
-    # Database configuration
+    # 数据库配置
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     
-    # Redis cache configuration
+    # Redis 缓存配置
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
     redis_enabled: bool = Field(default=True, alias="REDIS_ENABLED")
     
-    # Object storage (S3-compatible)
+    # 对象存储 (S3 兼容)
     s3_endpoint_url: str | None = Field(default=None, alias="S3_ENDPOINT_URL")
     s3_access_key: str | None = Field(default=None, alias="S3_ACCESS_KEY")
     s3_secret_key: str | None = Field(default=None, alias="S3_SECRET_KEY")
     s3_bucket_name: str = Field(default="lewis-artifacts", alias="S3_BUCKET_NAME")
     s3_region: str = Field(default="us-east-1", alias="S3_REGION")
     
-    # Vector database
+    # 向量数据库
     vector_db_type: Literal["weaviate", "qdrant", "pinecone", "none"] = Field(default="none", alias="VECTOR_DB_TYPE")
     vector_db_url: str | None = Field(default=None, alias="VECTOR_DB_URL")
     vector_db_api_key: str | None = Field(default=None, alias="VECTOR_DB_API_KEY")
     
-    # Security
+    # 安全性
     secret_key: str = Field(default="dev-secret-key-change-in-production", alias="SECRET_KEY")
     api_key_salt: str = Field(default="dev-salt-change-in-production", alias="API_KEY_SALT")
     cors_origins: list[str] | str = Field(default_factory=lambda: ["*"], alias="CORS_ORIGINS")
@@ -96,7 +96,7 @@ class Settings(BaseSettings):
         alias="TRUSTED_HOSTS",
     )
     
-    # Rate limiting
+    # 速率限制
     rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
     rate_limit_per_minute: int = Field(default=60, alias="RATE_LIMIT_PER_MINUTE")
     service_api_keys: list[str] | str = Field(default_factory=list, alias="SERVICE_API_KEYS")
@@ -201,13 +201,13 @@ class Settings(BaseSettings):
 
     @property
     def httpx_proxies(self) -> str | None:
-        """Return proxy URL for httpx clients (prefer HTTPS)."""
+        """返回 httpx 客户端的代理 URL (首选 HTTPS)。"""
         return self.https_proxy or self.http_proxy
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return cached settings instance."""
+    """返回缓存的设置实例。"""
     return Settings()  # type: ignore[arg-type]
 
 

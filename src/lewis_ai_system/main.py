@@ -1,4 +1,4 @@
-"""FastAPI application entrypoint."""
+"""FastAPI 应用程序入口点。"""
 
 from __future__ import annotations
 
@@ -14,19 +14,19 @@ from .routers import creative_router, general_router, governance_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifecycle."""
-    # Startup
+    """管理应用程序生命周期。"""
+    # 启动
     from .instrumentation import get_logger
     logger = get_logger()
-    logger.info(f"Starting Lewis AI System ({settings.environment})")
+    logger.info(f"正在启动 Lewis AI 系统 ({settings.environment})")
     
-    # Initialize database if configured
+    # 如果配置了数据库，则初始化数据库
     if settings.database_url:
         from .database import init_database
         try:
             await init_database()
-            logger.info("Database initialized successfully")
-            # Rebind creative repository to the database-backed implementation
+            logger.info("数据库初始化成功")
+            # 将创意存储库重新绑定到基于数据库的实现
             from .creative import repository as creative_repo_module
             creative_repo_module.creative_repository = creative_repo_module.DatabaseCreativeProjectRepository()
             from .creative import workflow as creative_workflow_module
@@ -36,48 +36,48 @@ async def lifespan(app: FastAPI):
             from .routers import creative as creative_router_module
             creative_router_module.creative_repository = creative_repo_module.creative_repository
             creative_router_module.creative_orchestrator = creative_workflow_module.creative_orchestrator
-            logger.info("Creative repository switched to database backend")
+            logger.info("创意存储库已切换到数据库后端")
         except Exception as e:
-            logger.error(f"Database initialization failed: {e}")
+            logger.error(f"数据库初始化失败: {e}")
     
-    # Initialize Redis cache
+    # 初始化 Redis 缓存
     if settings.redis_enabled:
         from .redis_cache import cache_manager
         try:
             await cache_manager.initialize()
-            logger.info("Redis cache initialized")
+            logger.info("Redis 缓存已初始化")
         except Exception as e:
-            logger.warning(f"Redis initialization failed: {e}")
+            logger.warning(f"Redis 初始化失败: {e}")
     
-    # Initialize vector database
+    # 初始化向量数据库
     try:
         from .vector_db import vector_db
         vector_db.initialize()
-        logger.info("Vector database initialized")
+        logger.info("向量数据库已初始化")
     except Exception as e:
-        logger.warning(f"Vector DB initialization failed: {e}")
+        logger.warning(f"向量数据库初始化失败: {e}")
     
-    # Initialize S3 storage
+    # 初始化 S3 存储
     from .s3_storage import s3_storage
     if s3_storage.is_available():
-        logger.info("S3 storage configured")
+        logger.info("S3 存储已配置")
     else:
-        logger.warning("S3 storage not configured, using local fallback")
+        logger.warning("S3 存储未配置，使用本地回退")
     
     yield
     
-    # Shutdown
-    logger.info("Shutting down Lewis AI System")
+    # 关闭
+    logger.info("正在关闭 Lewis AI 系统")
     if settings.database_url:
         from .database import db_manager
         await db_manager.close()
     
-    # Close Redis cache
+    # 关闭 Redis 缓存
     if settings.redis_enabled:
         from .redis_cache import cache_manager
         await cache_manager.close()
     
-    # Close vector database
+    # 关闭向量数据库
     from .vector_db import vector_db
     await vector_db.close()
 
@@ -88,7 +88,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS 中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -97,7 +97,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Trusted host middleware (production security)
+# 受信任的主机中间件 (生产安全)
 if settings.environment == "production":
     hosts = [host.strip() for host in settings.trusted_hosts]
     app.add_middleware(
@@ -105,7 +105,7 @@ if settings.environment == "production":
         allowed_hosts=hosts or ["*"],
     )
 
-# Include routers
+# 包含路由
 app.include_router(creative_router)
 app.include_router(general_router)
 app.include_router(governance_router)
@@ -113,15 +113,15 @@ app.include_router(governance_router)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler to ensure JSON responses."""
+    """全局异常处理程序，确保 JSON 响应。"""
     from fastapi.responses import JSONResponse
     from .instrumentation import get_logger
     import traceback
     
     logger = get_logger()
-    logger.error(f"Unhandled exception in {request.method} {request.url.path}: {exc}", exc_info=True)
+    logger.error(f"未处理的异常在 {request.method} {request.url.path}: {exc}", exc_info=True)
     
-    # Always include traceback in development, and error details in production
+    # 在开发环境中始终包含回溯，在生产环境中包含错误详细信息
     import os
     env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))
     if env != "production":
@@ -129,7 +129,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         return JSONResponse(
             status_code=500,
             content={
-                "detail": "Internal Server Error",
+                "detail": "内部服务器错误",
                 "error": str(exc),
                 "error_type": type(exc).__name__,
                 "traceback": traceback_str,
@@ -140,7 +140,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={
-            "detail": "Internal Server Error",
+            "detail": "内部服务器错误",
             "error": str(exc),
             "error_type": type(exc).__name__,
         },
@@ -149,7 +149,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/")
 async def root():
-    """Basic service metadata."""
+    """基本服务元数据。"""
     return {
         "message": "Lewis AI System API",
         "version": settings.api_version,
@@ -159,20 +159,20 @@ async def root():
 
 @app.get("/healthz")
 async def healthcheck() -> dict[str, str]:
-    """Health check endpoint."""
+    """健康检查端点。"""
     return {"status": "ok", "environment": settings.environment}
 
 
 @app.get("/readyz")
 async def readiness_check() -> dict[str, str]:
-    """Readiness check for container orchestration."""
+    """容器编排的就绪检查。"""
     checks = {
         "status": "ready",
         "database": "not_configured",
         "s3": "not_configured",
     }
     
-    # Check database
+    # 检查数据库
     if settings.database_url:
         try:
             from .database import db_manager
@@ -183,7 +183,7 @@ async def readiness_check() -> dict[str, str]:
         except Exception:
             checks["database"] = "error"
     
-    # Check S3
+    # 检查 S3
     from .s3_storage import s3_storage
     if s3_storage.is_available():
         checks["s3"] = "configured"

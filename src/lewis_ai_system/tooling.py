@@ -1,4 +1,7 @@
-"""Tool runtime and sandbox enforcement."""
+"""工具运行时和沙箱执行模块。
+
+本模块提供工具注册、执行和沙箱代码执行功能，支持安全的 Python 代码执行。
+"""
 
 from __future__ import annotations
 
@@ -15,46 +18,85 @@ from .instrumentation import TelemetryEvent, emit_event
 
 @dataclass(slots=True)
 class ToolRequest:
+    """工具执行请求。
+    
+    Attributes:
+        name: 工具名称
+        input: 工具输入参数字典
+    """
     name: str
     input: dict[str, Any]
 
 
 @dataclass(slots=True)
 class ToolResult:
+    """工具执行结果。
+    
+    Attributes:
+        output: 工具输出结果
+        cost_usd: 执行成本（美元），默认 0.0
+        metadata: 元数据字典，可选
+    """
     output: Any
     cost_usd: float = 0.0
     metadata: dict[str, Any] | None = None
 
 
 class ToolExecutionError(RuntimeError):
-    """Raised when a tool cannot be executed."""
+    """工具执行错误异常。
+    
+    当工具无法执行时抛出此异常。
+    """
 
 
 class Tool:
-    name: str
-    description: str
-    cost_estimate: float = 0.001
+    """工具基类。
+    
+    所有工具必须继承此类并实现 run 方法。
+    """
+    name: str  # 工具名称
+    description: str  # 工具描述
+    cost_estimate: float = 0.001  # 预估成本（美元）
 
     def run(self, payload: dict[str, Any]) -> ToolResult:  # pragma: no cover - interface
+        """执行工具。
+        
+        Args:
+            payload: 工具输入参数字典
+            
+        Returns:
+            工具执行结果
+            
+        Raises:
+            NotImplementedError: 子类必须实现此方法
+        """
         raise NotImplementedError
 
     @property
     def parameters(self) -> dict[str, Any]:
-        """JSON Schema for the tool input parameters."""
+        """获取工具参数的 JSON Schema 定义。
+        
+        Returns:
+            参数定义的 JSON Schema 字典
+        """
         return {}
 
 
 class PythonSandboxTool(Tool):
-    """Enhanced sandbox for secure Python execution with resource limits."""
+    """增强的 Python 沙箱工具，支持安全的代码执行和资源限制。
+    
+    支持使用 E2B 沙箱或本地回退执行 Python 代码。
+    """
 
     name = "python_sandbox"
-    description = "Executes Python code in a secure sandbox with CPU/memory limits."
+    description = "在安全的沙箱中执行 Python 代码，具有 CPU/内存限制。"
 
     def __init__(self) -> None:
+        """初始化 Python 沙箱工具。"""
         from .providers import get_sandbox_provider
         self.provider = get_sandbox_provider()
         
-        # Keep local fallback logic for now if provider is local
+        # 如果提供商是本地，保留本地回退逻辑
         self.allowed_builtins = MappingProxyType(
             {
                 "abs": abs,
@@ -89,11 +131,11 @@ class PythonSandboxTool(Tool):
 
         code = textwrap.dedent(code).strip()
         
-        # If using E2B, delegate to provider
+        # 如果使用 E2B，委托给提供商
         if self.provider.name == "e2b":
             try:
-                # If we're already inside an event loop (common in async workflows), run
-                # the provider coroutine on a worker thread to avoid nested loop errors.
+                # 如果已经在事件循环中（常见于异步工作流），
+                # 在工作线程上运行提供商的协程以避免嵌套循环错误
                 try:
                     asyncio.get_running_loop()
                     loop_running = True
@@ -121,7 +163,7 @@ class PythonSandboxTool(Tool):
             if result.get("error"):
                 raise ToolExecutionError(f"Sandbox execution failed: {result['error']}")
             
-            return ToolResult(output=result, cost_usd=0.01) # E2B cost estimate
+            return ToolResult(output=result, cost_usd=0.01)  # E2B 成本估算
 
         # 生产环境必须使用 E2B,不允许本地 fallback
         if settings.environment == "production":
@@ -159,12 +201,16 @@ class PythonSandboxTool(Tool):
 
 
 class WebSearchTool(Tool):
-    """Web search tool using configured provider."""
+    """网页搜索工具，使用配置的搜索提供商。
+    
+    支持 Tavily 等搜索 API，可以返回汇总的搜索结果。
+    """
 
     name = "web_search"
-    description = "Queries a web search API and returns summarized results."
+    description = "查询网页搜索 API 并返回汇总结果。"
 
     def __init__(self) -> None:
+        """初始化网页搜索工具。"""
         from .providers import get_search_provider
         self._provider_factory = get_search_provider
         self.provider = self._provider_factory()
@@ -204,12 +250,16 @@ class WebSearchTool(Tool):
 
 
 class WebScrapeTool(Tool):
-    """Web scraping tool using Firecrawl."""
+    """网页抓取工具，使用 Firecrawl 等提供商。
+    
+    从指定 URL 提取内容并转换为 Markdown 格式。
+    """
     
     name = "web_scrape"
-    description = "Extracts content from a URL as markdown."
+    description = "从 URL 提取内容并转换为 Markdown。"
     
     def __init__(self) -> None:
+        """初始化网页抓取工具。"""
         from .providers import get_scrape_provider
         self._provider_factory = get_scrape_provider
         self.provider = self._provider_factory()
@@ -252,7 +302,10 @@ class WebScrapeTool(Tool):
 
 
 class VideoGenerationTool(Tool):
-    """Tool for generating videos via provider APIs (Runway/Pika/Runware)."""
+    """视频生成工具，通过提供商 API（Runway/Pika/Runware）生成视频。
+    
+    支持多个视频生成服务提供商，可以根据配置或请求参数选择。
+    """
 
     name = "generate_video"
     description = "Generates video from text prompt using configured provider."
@@ -392,7 +445,10 @@ class TTSTool(Tool):
 
 
 class ToolRuntime:
-    """Shared registry handling execution and telemetry."""
+    """工具运行时，负责工具注册、执行和遥测。
+    
+    这是工具系统的核心类，管理所有已注册的工具并提供统一的执行接口。
+    """
 
     def __init__(self, sandbox_timeout: int = settings.sandbox.execution_timeout_seconds) -> None:
         self._tools: Dict[str, Tool] = {}
