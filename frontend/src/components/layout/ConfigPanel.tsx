@@ -62,7 +62,7 @@ function GeneralConfigPanel() {
             <Slider
               value={[generalConfig.temperature]}
               onValueChange={([value]) =>
-                updateGeneralConfig('temperature', value)
+                updateGeneralConfig({ temperature: value })
               }
               min={0}
               max={1}
@@ -82,7 +82,7 @@ function GeneralConfigPanel() {
           <div className="space-y-3">
             <Slider
               value={[generalConfig.topK]}
-              onValueChange={([value]) => updateGeneralConfig('topK', value)}
+              onValueChange={([value]) => updateGeneralConfig({ topK: value })}
               min={1}
               max={100}
               step={1}
@@ -102,7 +102,7 @@ function GeneralConfigPanel() {
             <Slider
               value={[generalConfig.maxTokens]}
               onValueChange={([value]) =>
-                updateGeneralConfig('maxTokens', value)
+                updateGeneralConfig({ maxTokens: value })
               }
               min={256}
               max={4096}
@@ -125,7 +125,7 @@ function GeneralConfigPanel() {
           <Switch
             checked={generalConfig.enableSearch}
             onCheckedChange={(checked) =>
-              updateGeneralConfig('enableSearch', checked)
+              updateGeneralConfig({ enableSearch: checked })
             }
           />
         </ConfigItem>
@@ -139,7 +139,7 @@ function GeneralConfigPanel() {
           <Switch
             checked={generalConfig.enablePython}
             onCheckedChange={(checked) =>
-              updateGeneralConfig('enablePython', checked)
+              updateGeneralConfig({ enablePython: checked })
             }
           />
         </ConfigItem>
@@ -150,7 +150,7 @@ function GeneralConfigPanel() {
           <Switch
             checked={generalConfig.enableMemory}
             onCheckedChange={(checked) =>
-              updateGeneralConfig('enableMemory', checked)
+              updateGeneralConfig({ enableMemory: checked })
             }
           />
         </ConfigItem>
@@ -161,10 +161,12 @@ function GeneralConfigPanel() {
         variant="outline"
         className="w-full rounded-google"
         onClick={() => {
-          updateGeneralConfig('temperature', 0.7);
-          updateGeneralConfig('topK', 40);
-          updateGeneralConfig('topP', 0.95);
-          updateGeneralConfig('maxTokens', 2048);
+          updateGeneralConfig({
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxTokens: 2048,
+          });
         }}
       >
         恢复默认设置
@@ -186,8 +188,8 @@ function CreativeConfigPanel() {
         <ConfigItem label="AI Provider" description="选择视频生成引擎">
           <Select
             value={creativeConfig.videoProvider}
-            onValueChange={(value: any) =>
-              updateCreativeConfig('videoProvider', value)
+            onValueChange={(value: 'runway' | 'pika' | 'runware') =>
+              updateCreativeConfig({ videoProvider: value })
             }
           >
             <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
@@ -208,7 +210,7 @@ function CreativeConfigPanel() {
           <Select
             value={creativeConfig.videoDuration.toString()}
             onValueChange={(value) =>
-              updateCreativeConfig('videoDuration', parseInt(value) as any)
+              updateCreativeConfig({ videoDuration: parseInt(value) as 3 | 5 | 10 })
             }
           >
             <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
@@ -234,7 +236,7 @@ function CreativeConfigPanel() {
                   creativeConfig.videoRatio === ratio ? 'default' : 'outline'
                 }
                 size="sm"
-                onClick={() => updateCreativeConfig('videoRatio', ratio)}
+                onClick={() => updateCreativeConfig({ videoRatio: ratio })}
                 className="rounded-google"
               >
                 {ratio}
@@ -249,8 +251,8 @@ function CreativeConfigPanel() {
         <ConfigItem label="Quality" description="视频质量">
           <Select
             value={creativeConfig.videoQuality}
-            onValueChange={(value: any) =>
-              updateCreativeConfig('videoQuality', value)
+            onValueChange={(value: 'draft' | 'standard' | 'high') =>
+              updateCreativeConfig({ videoQuality: value })
             }
           >
             <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
@@ -271,7 +273,7 @@ function CreativeConfigPanel() {
           <Select
             value={creativeConfig.stylePreset}
             onValueChange={(value) =>
-              updateCreativeConfig('stylePreset', value)
+              updateCreativeConfig({ stylePreset: value })
             }
           >
             <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
@@ -294,7 +296,7 @@ function CreativeConfigPanel() {
             <Slider
               value={[creativeConfig.framesPerScene]}
               onValueChange={([value]) =>
-                updateCreativeConfig('framesPerScene', value)
+                updateCreativeConfig({ framesPerScene: value })
               }
               min={1}
               max={8}

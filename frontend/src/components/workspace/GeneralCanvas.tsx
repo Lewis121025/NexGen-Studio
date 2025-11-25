@@ -101,11 +101,9 @@ export default function GeneralCanvas() {
         (sessionData?.messages || []).slice(-1)[0] ||
         '完成';
       addMessage(sessionId, {
-        id: uuid(),
         role: 'assistant',
         content: assistantText,
-        timestamp: new Date(),
-        toolInvocations: sessionData?.tool_calls,
+        toolCalls: sessionData?.tool_calls,
       });
       setStreaming(false);
       setStatusText('');
@@ -113,10 +111,8 @@ export default function GeneralCanvas() {
     }
     if (data.status === 'error') {
       addMessage(sessionId, {
-        id: uuid(),
         role: 'assistant',
         content: data.message || '生成失败',
-        timestamp: new Date(),
       });
       setStreaming(false);
       setStatusText('');
@@ -132,13 +128,10 @@ export default function GeneralCanvas() {
     setStreaming(true);
     setStatusText('AI 正在思考...');
 
-    const userMessage = {
-      id: uuid(),
+    addMessage(session.id, {
       role: 'user',
       content: text,
-      timestamp: new Date(),
-    };
-    addMessage(session.id, userMessage);
+    });
 
     try {
       const backendId = await ensureBackendSession(text, session.id);
@@ -190,10 +183,8 @@ export default function GeneralCanvas() {
     } catch (e: any) {
       console.error(e);
       addMessage(session.id, {
-        id: uuid(),
         role: 'assistant',
         content: e?.message || '发送失败',
-        timestamp: new Date(),
       });
       setStreaming(false);
       setStatusText('');
@@ -241,10 +232,10 @@ export default function GeneralCanvas() {
                   <MessageBubble message={message} />
 
                   {/* Tool Invocations */}
-                  {message.toolInvocations &&
-                    message.toolInvocations.length > 0 && (
+                  {message.toolCalls &&
+                    message.toolCalls.length > 0 && (
                       <div className="mt-3 space-y-2">
-                        {message.toolInvocations.map((tool, toolIndex) => (
+                        {message.toolCalls.map((tool, toolIndex) => (
                           <ToolInvocationCard
                             key={`${message.id}-tool-${toolIndex}`}
                             tool={tool}

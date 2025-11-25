@@ -50,8 +50,8 @@ export default function CreativeCanvas() {
   const projectQuery = useQuery({
     queryKey: ['creativeProject', projectId],
     enabled: !!projectId,
-    refetchInterval: (data) => {
-      const state = (data?.project?.state as string) || '';
+    refetchInterval: (query) => {
+      const state = (query.state.data?.project?.state as string) || '';
       return state === 'completed' ? false : 2000;
     },
     queryFn: async () => {
