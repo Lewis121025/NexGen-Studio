@@ -18,17 +18,27 @@ def test_web_search_tool_uses_provider():
     mock_provider.search.assert_called_once_with("test")
 
 def test_sandbox_tool_uses_e2b_provider():
-    mock_provider = MagicMock(spec=E2BSandboxProvider)
-    mock_provider.run_code = AsyncMock(return_value={"stdout": "Hello", "stderr": "", "results": []})
-    mock_provider.name = "e2b"
+    from unittest.mock import patch
+    from lewis_ai_system.sandbox import EnhancedSandbox
+    
+    # Mock the EnhancedSandbox.execute_python method
+    mock_sandbox = MagicMock(spec=EnhancedSandbox)
+    mock_sandbox.execute_python = MagicMock(return_value={
+        "stdout": "Hello",
+        "stderr": "",
+        "result": None,
+        "results": [],
+        "error": None
+    })
     
     tool = PythonSandboxTool()
-    tool.provider = mock_provider
+    # Inject mock sandbox
+    tool._sandbox = mock_sandbox
     
     result = tool.run({"code": "print('Hello')"})
     
     assert result.output["stdout"] == "Hello"
-    mock_provider.run_code.assert_called_once()
+    mock_sandbox.execute_python.assert_called_once()
 
 def test_web_scrape_tool_uses_provider():
     mock_provider = MagicMock(spec=FirecrawlScrapeProvider)

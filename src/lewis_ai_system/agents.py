@@ -10,6 +10,8 @@ import json
 import re
 from typing import Any, Sequence
 
+from openai import AsyncOpenAI
+
 from .config import settings
 from .providers import LLMProvider, default_llm_provider
 
@@ -292,6 +294,7 @@ class CreativeAgent:
             provider: LLM 提供商实例，如果为 None 则使用默认提供商
         """
         self.provider = provider or default_llm_provider
+        self.openai_client: AsyncOpenAI | None = None
 
     async def write_script(self, brief: str, duration: int, style: str) -> str:
         """生成视频脚本。
@@ -359,51 +362,27 @@ class CreativeAgent:
             ]
 
     async def generate_panel_visual(self, description: str) -> str:
-        """Generate a visual for a storyboard panel using DALL-E 3 or fallback.
-        
-        Returns:
-            URL of the generated image
-        """
-        from .config import settings
-        from .instrumentation import get_logger
-        
-        logger = get_logger()
-        
-        # 生产环境必须使用真实的图片生成 API
-        if settings.environment == "production" and not settings.openrouter_api_key:
-            raise RuntimeError(
-                "生产环境必须配置 OPENROUTER_API_KEY 以生成分镜图片!"
+        if settings.llm_provider_mode == "mock":
+            return f"https://placeholder.lewis.ai/{hash(description)}.jpg"
+
+        if not settings.openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is required for storyboard visualization.")
+
+        if self.openai_client is None:
+            # Use OpenRouter-compatible OpenAI client for image generation
+            self.openai_client = AsyncOpenAI(
+                api_key=settings.openrouter_api_key,
+                base_url="https://openrouter.ai/api/v1",
             )
-        
-        # 尝试使用 OpenAI DALL-E 3 生成图片
-        try:
-            # 构造专业的分镜提示词
-            prompt = f"Professional storyboard sketch: {description}. Clean linework, cinematographic composition, black and white or minimal color."
-            
-            # 如果配置了 OpenRouter,尝试通过 OpenRouter 调用 DALL-E
-            if settings.openrouter_api_key:
-                import httpx
-                
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    # Note: OpenRouter 可能不支持图片生成,需要直接调用 OpenAI
-                    # 这里先记录日志,实际可能需要独立的 OPENAI_API_KEY
-                    logger.warning(
-                        "图片生成需要 OpenAI API Key, OpenRouter 可能不支持此功能。"
-                        "考虑配置独立的 OPENAI_API_KEY 或使用 Replicate API。"
-                    )
-            
-            # 开发/测试环境 Fallback 到占位图
-            logger.info(f"使用 Mock 图片生成 (开发模式): {description[:50]}...")
-            import hashlib
-            digest = hashlib.md5(description.encode()).hexdigest()[:8]
-            
-            # 使用真实的占位符服务 (支持自定义尺寸)
-            return f"https://placehold.co/1024x576/1a1a1a/white?text=Storyboard+{digest}"
-            
-        except Exception as e:
-            logger.error(f"图片生成失败: {e}")
-            # 返回错误占位图
-            return "https://placehold.co/1024x576/ff0000/white?text=Generation+Failed"
+
+        response = await self.openai_client.images.generate(
+            model="dall-e-3",
+            prompt=f"Storyboard sketch: {description}",
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        return response.data[0].url
 
 
 class GeneralAgent:

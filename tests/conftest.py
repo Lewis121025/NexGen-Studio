@@ -20,8 +20,12 @@ def configure_test_providers():
 
     original_mode = settings.llm_provider_mode
     original_key = settings.openrouter_api_key
+    original_env = settings.environment
+    
     settings.llm_provider_mode = "mock"
     settings.openrouter_api_key = None
+    settings.environment = "development"  # Disable TrustedHostMiddleware
+    
     providers.default_llm_provider = providers.EchoLLMProvider()
     creative_workflow.default_llm_provider = providers.default_llm_provider
     general_session.default_llm_provider = providers.default_llm_provider
@@ -30,3 +34,4 @@ def configure_test_providers():
     yield
     settings.llm_provider_mode = original_mode
     settings.openrouter_api_key = original_key
+    settings.environment = original_env

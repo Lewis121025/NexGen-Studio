@@ -9,7 +9,7 @@ from lewis_ai_system.general.models import GeneralSession, GeneralSessionState
 from lewis_ai_system.main import app
 from lewis_ai_system.config import settings
 
-client = TestClient(app, raise_server_exceptions=False)
+client = TestClient(app, base_url="http://localhost", raise_server_exceptions=False)
 
 @pytest.fixture
 def mock_providers():
@@ -42,7 +42,7 @@ def mock_providers():
         def __init__(self, store: dict[str, CreativeProject]) -> None:
             self._store = store
 
-        def get(self, project_id: str) -> CreativeProject:
+        async def get(self, project_id: str) -> CreativeProject:
             return self._store[project_id]
 
     class FakeGeneralOrchestrator:
@@ -70,7 +70,7 @@ def mock_providers():
         def __init__(self, store: dict[str, GeneralSession]) -> None:
             self._store = store
 
-        def get(self, session_id: str) -> GeneralSession:
+        async def get(self, session_id: str) -> GeneralSession:
             return self._store[session_id]
 
     fake_creative = FakeCreativeOrchestrator()
@@ -86,11 +86,11 @@ def mock_providers():
 
 def test_health_endpoints():
     response = client.get("/healthz")
-    assert response.status_code == 200
+    assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     assert response.json()["status"] == "ok"
 
     response = client.get("/readyz")
-    assert response.status_code == 200
+    assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     # Database might be not_initialized in test env without real DB
     assert "database" in response.json()
 
@@ -100,7 +100,7 @@ def test_creative_mode_lifecycle(mock_providers):
         "title": "Test Project",
         "brief": "A test project brief."
     })
-    assert response.status_code == 201
+    assert response.status_code == 201, f"Status: {response.status_code}, Body: {response.text}"
     project = response.json()["project"]
     project_id = project["id"]
     
@@ -112,7 +112,7 @@ def test_creative_mode_lifecycle(mock_providers):
     
     # Let's check project status
     response = client.get(f"/creative/projects/{project_id}")
-    assert response.status_code == 200
+    assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     assert response.json()["project"]["title"] == "Test Project"
 
 def test_general_mode_lifecycle(mock_providers):
@@ -121,19 +121,19 @@ def test_general_mode_lifecycle(mock_providers):
         "goal": "Test Goal",
         "user_id": "test_user"
     })
-    assert response.status_code == 201
+    assert response.status_code == 201, f"Status: {response.status_code}, Body: {response.text}"
     session_id = response.json()["session"]["id"]
     
     # 2. Iterate (Mocked)
     response = client.post(f"/general/sessions/{session_id}/iterate", json={
         "input": "Start working"
     })
-    assert response.status_code == 200
+    assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     assert response.json()["session"]["state"] == GeneralSessionState.COMPLETED
     
     # 3. Check History
     response = client.get(f"/general/sessions/{session_id}")
-    assert response.status_code == 200
+    assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     assert response.json()["session"]["goal"] == "Test Goal"
 
 def test_global_exception_handler():
@@ -143,6 +143,6 @@ def test_global_exception_handler():
         raise ValueError("Test Error")
     
     response = client.get("/force_error")
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Internal Server Error"
+    assert response.status_code == 500, f"Status: {response.status_code}, Body: {response.text}"
+    assert response.json()["detail"] == "内部服务器错误"
     assert "Test Error" in response.json()["error"]

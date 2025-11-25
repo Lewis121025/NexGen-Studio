@@ -90,13 +90,15 @@ class CreativeProject(BaseModel):
     tenant_id: str
     title: str
     brief: str
+    summary: str | None = None
     duration_seconds: int = 30
     style: str = "cinematic"
+    aspect_ratio: str = "16:9"
+    video_provider: str = "runway"
     budget_limit_usd: float = 50.0
     cost_usd: float = 0.0
     state: CreativeProjectState = CreativeProjectState.BRIEF_PENDING
     pre_pause_state: CreativeProjectState | None = None
-    summary: str | None = None
     script: str | None = None
     storyboard: list[StoryboardPanel] = Field(default_factory=list)
     shots: list[GeneratedShotAsset] = Field(default_factory=list)
@@ -104,6 +106,7 @@ class CreativeProject(BaseModel):
     preview_record: PreviewRecord | None = None
     validation_record: ValidationRecord | None = None
     distribution_log: list[DistributionRecord] = Field(default_factory=list)
+    error_message: str | None = None
     pause_reason: str | None = None
     paused_at: datetime | None = None
     auto_pause_enabled: bool = True

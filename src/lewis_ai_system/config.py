@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     service_api_keys: list[str] | str = Field(default_factory=list, alias="SERVICE_API_KEYS")
 
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
-    llm_provider_mode: Literal["mock", "openrouter"] = Field(default="mock", alias="LLM_PROVIDER_MODE")
+    llm_provider_mode: Literal["mock", "openrouter"] = Field(default="openrouter", alias="LLM_PROVIDER_MODE")
 
     runway_api_key: str | None = Field(default=None, alias="RUNWAY_API_KEY")
     pika_api_key: str | None = Field(default=None, alias="PIKA_API_KEY")
@@ -161,44 +161,42 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_keys(self) -> "Settings":
-        """生产环境必须配置真实的 API Keys,不允许使用 Mock 模式"""
+        """������������������ʵ�� API Keys,������ʹ�� Mock ģʽ"""
         if self.environment == "production":
-            # 检查核心 AI Provider Keys
+            # ������ AI Provider Keys
             if self.llm_provider_mode == "mock":
                 raise ValueError(
-                    "生产环境不允许使用 Mock LLM Provider! "
-                    "请设置 OPENROUTER_API_KEY 并将 LLM_PROVIDER_MODE 改为 'openrouter'"
+                    "Production cannot run with the mock LLM provider. "
+                    "Set LLM_PROVIDER_MODE=openrouter and provide the required API keys."
                 )
-            
+
+            missing_keys: list[str] = []
             if not self.openrouter_api_key:
+                missing_keys.append("OPENROUTER_API_KEY")
+            if not self.e2b_api_key:
+                missing_keys.append("E2B_API_KEY")
+
+            if missing_keys:
                 raise ValueError(
-                    "生产环境必须配置 OPENROUTER_API_KEY! "
-                    "请在 .env 文件中设置真实的 OpenRouter API Key"
+                    f"Missing required production keys: {', '.join(missing_keys)}. "
+                    "Populate them in the environment before starting the service."
                 )
-            
-            # 检查沙箱 Key
-            if self.sandbox.enabled and not self.e2b_api_key:
-                raise ValueError(
-                    "生产环境启用沙箱时必须配置 E2B_API_KEY! "
-                    "代码执行不能使用本地 exec(),请在 .env 中配置 E2B API Key"
-                )
-            
-            # 检查数据库配置
+
+            # ������ݿ�����
             if not self.database_url:
                 raise ValueError(
-                    "生产环境必须配置 DATABASE_URL! "
-                    "请设置 PostgreSQL 数据库连接字符串"
+                    "���������������� DATABASE_URL! "
+                    "������ PostgreSQL ���ݿ������ַ���"
                 )
-            
-            # 检查 Secret Key
+
+            # ��� Secret Key
             if self.secret_key == "dev-secret-key-change-in-production":
                 raise ValueError(
-                    "生产环境必须修改 SECRET_KEY! "
-                    "请生成一个安全的随机密钥 (建议使用 openssl rand -hex 32)"
+                    "�������������޸� SECRET_KEY! "
+                    "������һ����ȫ�������Կ (����ʹ�� openssl rand -hex 32)"
                 )
-        
-        return self
 
+        return self
     @property
     def httpx_proxies(self) -> str | None:
         """返回 httpx 客户端的代理 URL (首选 HTTPS)。"""

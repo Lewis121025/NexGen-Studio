@@ -1,11 +1,11 @@
 /**
- * General Canvas - 通用对话画布
- * 传统的 Chat UI + Tool Invocation Cards
+ * General Canvas - 通用对话界面
+ * 真实流式聊天 + 工具调用卡片
  */
 
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStudioStore, selectCurrentSession } from '@/lib/stores/studio';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,14 +22,26 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+function uuid() {
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export default function GeneralCanvas() {
+  const createSession = useStudioStore((state) => state.createSession);
+  const setSessionBackendId = useStudioStore(
+    (state) => state.setSessionBackendId
+  );
+  const addMessage = useStudioStore((state) => state.addMessage);
   const currentSessionId = useStudioStore((state) => state.currentSessionId);
   const isStreaming = useStudioStore((state) => state.isStreaming);
   const setStreaming = useStudioStore((state) => state.setStreaming);
   const currentSession = useStudioStore(selectCurrentSession);
+
   const [input, setInput] = useState('');
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+  const [statusText, setStatusText] = useState<string>('AI 正在思考...');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -38,18 +50,156 @@ export default function GeneralCanvas() {
     }
   }, [currentSession?.messages]);
 
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
+
+  const ensureSession = () => {
+    if (!currentSession) {
+      return createSession('general', 'General Chat');
+    }
+    return currentSession;
+  };
+
+  const ensureBackendSession = async (
+    goal: string,
+    sessionId: string
+  ): Promise<string> => {
+    const localSession = useStudioStore
+      .getState()
+      .sessions.find((s) => s.id === sessionId);
+    if (localSession?.backendId) return localSession.backendId;
+
+    const res = await fetch('/api/general/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal, tenant_id: 'demo' }),
+    });
+    if (!res.ok) throw new Error('创建会话失败');
+    const data = await res.json();
+    const backendId = data?.session?.id;
+    if (!backendId) throw new Error('未获取到会话 ID');
+    setSessionBackendId(sessionId, backendId);
+    return backendId;
+  };
+
+  const handleSSEEvent = (data: any, sessionId: string) => {
+    if (data.status === 'thinking') {
+      setStatusText('AI 正在思考...');
+      return;
+    }
+    if (data.status === 'processing') {
+      setStatusText('AI 正在调用工具...');
+      return;
+    }
+    if (data.status === 'completed') {
+      const sessionData = data.session;
+      const assistantText =
+        sessionData?.summary ||
+        (sessionData?.messages || []).slice(-1)[0] ||
+        '完成';
+      addMessage(sessionId, {
+        id: uuid(),
+        role: 'assistant',
+        content: assistantText,
+        timestamp: new Date(),
+        toolInvocations: sessionData?.tool_calls,
+      });
+      setStreaming(false);
+      setStatusText('');
+      return;
+    }
+    if (data.status === 'error') {
+      addMessage(sessionId, {
+        id: uuid(),
+        role: 'assistant',
+        content: data.message || '生成失败',
+        timestamp: new Date(),
+      });
+      setStreaming(false);
+      setStatusText('');
+    }
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isStreaming) return;
 
-    // TODO: 集成 Vercel AI SDK 处理流式响应
-    console.log('Sending message:', input);
+    const session = ensureSession();
+    const text = input.trim();
     setInput('');
     setStreaming(true);
+    setStatusText('AI 正在思考...');
 
-    // 模拟延迟
-    setTimeout(() => {
+    const userMessage = {
+      id: uuid(),
+      role: 'user',
+      content: text,
+      timestamp: new Date(),
+    };
+    addMessage(session.id, userMessage);
+
+    try {
+      const backendId = await ensureBackendSession(text, session.id);
+      const form = new FormData();
+      form.append('prompt', text);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const res = await fetch(`/api/general/sessions/${backendId}/message`, {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+
+      if (!res.body) {
+        throw new Error('未收到流式响应');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      const flushEvents = (chunk: string) => {
+        buffer += chunk;
+        let boundary;
+        while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+          const raw = buffer.slice(0, boundary).trim();
+          buffer = buffer.slice(boundary + 2);
+          if (!raw.startsWith('data:')) continue;
+          try {
+            const payload = JSON.parse(raw.replace(/^data:\s*/, ''));
+            handleSSEEvent(payload, session.id);
+          } catch (e) {
+            console.error('解析 SSE 失败', e);
+          }
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          flushEvents('');
+          break;
+        }
+        const chunk = decoder.decode(value, { stream: true });
+        flushEvents(chunk);
+      }
+    } catch (e: any) {
+      console.error(e);
+      addMessage(session.id, {
+        id: uuid(),
+        role: 'assistant',
+        content: e?.message || '发送失败',
+        timestamp: new Date(),
+      });
       setStreaming(false);
-    }, 2000);
+      setStatusText('');
+    } finally {
+      abortRef.current = null;
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -73,7 +223,7 @@ export default function GeneralCanvas() {
 
   return (
     <div className="h-full flex flex-col bg-surface-1">
-      {/* 消息列表 */}
+      {/* 信息列表 */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
           {!currentSession || currentSession.messages.length === 0 ? (
@@ -113,7 +263,7 @@ export default function GeneralCanvas() {
             </AnimatePresence>
           )}
 
-          {/* 流式加载指示器 */}
+          {/* 流式状态指示条 */}
           {isStreaming && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -126,7 +276,7 @@ export default function GeneralCanvas() {
               <div className="flex-1 bg-surface-2 rounded-google-lg p-4">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>AI 正在思考...</span>
+                  <span>{statusText}</span>
                 </div>
               </div>
             </motion.div>
@@ -134,7 +284,7 @@ export default function GeneralCanvas() {
         </div>
       </div>
 
-      {/* 输入区域 */}
+      {/* 输入区 */}
       <div className="border-t border-border/30 bg-surface-2/50 backdrop-blur-sm p-4">
         <div className="max-w-3xl mx-auto">
           <div className="relative">
@@ -142,7 +292,7 @@ export default function GeneralCanvas() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入你的问题或任务... (Shift + Enter 换行)"
+              placeholder="请输入你的问题、任务或代码... (Shift + Enter 换行)"
               className="min-h-[80px] max-h-[200px] pr-12 rounded-google-lg bg-surface-1 border-border/50 focus-visible:ring-primary resize-none"
               disabled={isStreaming}
             />
@@ -161,7 +311,7 @@ export default function GeneralCanvas() {
           </div>
 
           <div className="mt-2 text-xs text-muted-foreground text-center">
-            Lewis AI 可能会出错,请核查重要信息
+            Lewis AI 会实时推理与调用工具，结果将流式返回
           </div>
         </div>
       </div>
@@ -169,7 +319,7 @@ export default function GeneralCanvas() {
   );
 }
 
-// ==================== 消息气泡 ====================
+// ==================== 信息气泡 ====================
 function MessageBubble({ message }: { message: any }) {
   const isUser = message.role === 'user';
 
@@ -217,8 +367,8 @@ function ToolInvocationCard({
   onToggle: () => void;
 }) {
   const getToolIcon = () => {
-    if (tool.toolName.includes('search')) return Search;
-    if (tool.toolName.includes('code') || tool.toolName.includes('python'))
+    if (tool.toolName?.includes('search')) return Search;
+    if (tool.toolName?.includes('code') || tool.toolName?.includes('python'))
       return Code;
     return Code;
   };
@@ -280,10 +430,10 @@ function ToolInvocationCard({
 // ==================== 空状态 ====================
 function EmptyState() {
   const suggestions = [
-    '解释量子计算的基本原理',
-    '帮我写一个 Python 爬虫',
-    '搜索最新的 AI 新闻',
-    '分析这段代码的时间复杂度',
+    '解释最新的机器学习论文要点',
+    '请帮我写一个 Python 脚本',
+    '给我一个调研提纲',
+    '帮我估算一下项目时间和人力',
   ];
 
   return (
@@ -291,11 +441,9 @@ function EmptyState() {
       <div className="w-16 h-16 bg-primary/10 rounded-google-lg flex items-center justify-center mb-4">
         <Bot className="w-8 h-8 text-primary" />
       </div>
-      <h2 className="text-xl font-semibold text-foreground mb-2">
-        开始新对话
-      </h2>
+      <h2 className="text-xl font-semibold text-foreground mb-2">开始对话</h2>
       <p className="text-sm text-muted-foreground mb-6 max-w-md">
-        我可以帮你编程、搜索、分析数据,还能运行 Python 代码
+        我可以帮你思考、搜索或写代码，输入你的需求即可开始。
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">

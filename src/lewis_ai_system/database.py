@@ -22,19 +22,28 @@ Base = declarative_base()
 class CreativeProject(Base):
     __tablename__ = "creative_projects"
     
-    # ========== 主键与索引 ==========
+    # ========== 核心标识列 ==========
     id = Column(Integer, primary_key=True)
     external_id = Column(String(64), unique=True, index=True, nullable=False)
     user_id = Column(String(100), nullable=False, index=True)
     prompt_hash = Column(String(64), index=True)
     
-    # ========== 核心业务字段 (从 config_json 提升) ==========
+    # ========== 核心业务字段（规范化） ==========
     title = Column(String(200), nullable=False)
-    brief = Column(Text, nullable=False)  # 用户原始需求
-    duration_seconds = Column(Integer, nullable=False, default=5)  # 视频时长
-    aspect_ratio = Column(String(10), nullable=False, default="16:9")  # 视频比例
-    style = Column(String(50), nullable=False, default="cinematic")  # 风格预设
-    video_provider = Column(String(50), default="runway")  # 视频生成 Provider
+    brief = Column(Text, nullable=False)
+    summary = Column(Text, nullable=True)
+    duration_seconds = Column(Integer, nullable=False, default=5)
+    aspect_ratio = Column(String(10), nullable=False, default="16:9")
+    style = Column(String(50), nullable=False, default="cinematic")
+    video_provider = Column(String(50), default="runway")
+    script_text = Column(Text, nullable=True)
+    storyboard_json = Column(JSON)
+    shots_json = Column(JSON)
+    render_manifest_json = Column(JSON)
+    preview_json = Column(JSON)
+    validation_json = Column(JSON)
+    distribution_json = Column(JSON)
+    error_message = Column(Text, nullable=True)
     
     # ========== 状态与暂停 ==========
     status = Column(String(50), nullable=False, default="initiated", index=True)
@@ -46,14 +55,11 @@ class CreativeProject(Base):
     # ========== 预算与成本 ==========
     budget_usd = Column(Float, default=50.0, nullable=False)
     cost_usd = Column(Float, default=0.0, nullable=False)
-    auto_pause_enabled = Column(Boolean, default=True)  # 超预算自动暂停
+    auto_pause_enabled = Column(Boolean, default=True)
     
     # ========== 时间戳 ==========
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
     last_active_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-    
-    # ========== 扩展配置 (非核心字段保留在 JSON) ==========
-    config_json = Column(JSON)  # 用于存储非核心的扩展配置
     
     # Relationships
     scripts = relationship("Script", back_populates="project", cascade="all, delete-orphan")

@@ -83,6 +83,7 @@ docker-compose.override.yml
 # Testing
 .pytest_cache/
 test-results/
+test_output*.txt
 
 # Logs
 logs/

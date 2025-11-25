@@ -22,29 +22,11 @@ echo "[info] Currently running services:"
 docker compose ps postgres redis weaviate
 echo ""
 
-# Ask about volume cleanup
-clean_volumes=false
-read -p "Delete data volumes? This will remove all database data (y/N): " response
-if [[ "$response" == "y" || "$response" == "Y" ]]; then
-  clean_volumes=true
-  echo "[warning] This will delete all database data!"
-  read -p "Confirm deletion? Type 'yes' to continue: " confirm
-  if [[ "$confirm" != "yes" ]]; then
-    echo "[info] Operation cancelled"
-    exit 0
-  fi
-fi
-
-echo ""
-echo "[info] Stopping database services..."
-
-if [[ "$clean_volumes" == "true" ]]; then
-  echo "[info] Stopping services and removing data volumes..."
-  docker compose down -v postgres redis weaviate
-else
-  echo "[info] Stopping services (preserving data volumes)..."
-  docker compose stop postgres redis weaviate
-fi
+echo "[info] Stopping database services (volumes preserved)..."
+docker compose stop postgres redis weaviate || {
+  echo "[warn] docker compose stop failed, attempting docker compose down (volumes preserved)..."
+  docker compose down
+}
 
 if [[ $? -ne 0 ]]; then
   echo "[error] Failed to stop services" >&2
@@ -57,12 +39,6 @@ echo "  ✅ Database services stopped"
 echo "======================================="
 echo ""
 
-if [[ "$clean_volumes" == "true" ]]; then
-  echo "[info] Data volumes have been removed, all data cleared"
-else
-  echo "[info] Data volumes preserved, data is safe"
-  echo "[info] Restart with: ./scripts/start-databases.sh"
-fi
-
+echo "[info] Data volumes preserved, data is safe"
+echo "[info] Restart with: ./scripts/start-databases.sh"
 echo ""
-

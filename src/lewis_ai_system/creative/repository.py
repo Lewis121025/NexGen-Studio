@@ -80,11 +80,6 @@ class DatabaseCreativeProjectRepository(BaseCreativeProjectRepository):
     def __init__(self) -> None:
         if not settings.database_url:
             raise RuntimeError("DATABASE_URL must be configured for DatabaseCreativeProjectRepository")
-        
-        # Check if database is actually initialized
-        from ..database import db_manager
-        if not db_manager.engine:
-            raise RuntimeError("Database not initialized. Call init_database() first.")
 
     async def create(self, payload: CreativeProjectCreateRequest) -> CreativeProject:
         project = CreativeProject(
@@ -102,9 +97,9 @@ class DatabaseCreativeProjectRepository(BaseCreativeProjectRepository):
 
     async def get(self, project_id: str) -> CreativeProject:
         record = await self._fetch_record(project_id)
-        if not record or not record.config_json:
+        if not record:
             raise KeyError(f"Project {project_id} not found")
-        return CreativeProject.model_validate(record.config_json)
+        return self._record_to_model(record)
 
     async def upsert(self, project: CreativeProject) -> CreativeProject:
         await self._persist(project)
@@ -114,37 +109,105 @@ class DatabaseCreativeProjectRepository(BaseCreativeProjectRepository):
         async with db_manager.get_session() as db:
             stmt = select(CreativeProjectRecord).where(CreativeProjectRecord.user_id == tenant_id)
             results = (await db.scalars(stmt)).all()
-            return [CreativeProject.model_validate(rec.config_json) for rec in results if rec.config_json]
+            return [self._record_to_model(rec) for rec in results]
 
     async def _persist(self, project: CreativeProject) -> None:
         async with db_manager.get_session() as db:
             stmt = select(CreativeProjectRecord).where(CreativeProjectRecord.external_id == project.id)
             record = await db.scalar(stmt)
-            payload = project.model_dump(mode="json")
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             if record:
-                record.config_json = payload
-                record.status = project.state.value
-                record.cost_usd = project.cost_usd
-                record.budget_usd = project.budget_limit_usd
-                record.last_active_at = now
+                self._update_record_from_model(record, project, now)
             else:
-                record = CreativeProjectRecord(
-                    external_id=project.id,
-                    user_id=project.tenant_id,
-                    config_json=payload,
-                    status=project.state.value,
-                    cost_usd=project.cost_usd,
-                    budget_usd=project.budget_limit_usd,
-                    created_at=now,
-                    last_active_at=now,
-                )
-                db.add(record)
+                db.add(self._new_record_from_model(project, now))
 
     async def _fetch_record(self, project_id: str) -> CreativeProjectRecord | None:
         async with db_manager.get_session() as db:
             stmt = select(CreativeProjectRecord).where(CreativeProjectRecord.external_id == project_id)
             return await db.scalar(stmt)
+
+    def _record_to_model(self, record: CreativeProjectRecord) -> CreativeProject:
+        from .models import CreativeProjectState
+
+        state_value = record.status or CreativeProjectState.BRIEF_PENDING.value
+        try:
+            state = CreativeProjectState(state_value)
+        except Exception:
+            state = CreativeProjectState.BRIEF_PENDING
+
+        pre_pause_state = None
+        if record.pre_pause_state:
+            try:
+                pre_pause_state = CreativeProjectState(record.pre_pause_state)
+            except Exception:
+                pre_pause_state = None
+
+        return CreativeProject(
+            id=record.external_id,
+            tenant_id=record.user_id,
+            title=record.title,
+            brief=record.brief,
+            summary=record.summary,
+            duration_seconds=record.duration_seconds,
+            aspect_ratio=record.aspect_ratio,
+            video_provider=record.video_provider,
+            style=record.style,
+            budget_limit_usd=record.budget_usd,
+            cost_usd=record.cost_usd,
+            state=state,
+            pre_pause_state=pre_pause_state,
+            script=record.script_text,
+            storyboard=record.storyboard_json or [],
+            shots=record.shots_json or [],
+            render_manifest=record.render_manifest_json,
+            preview_record=record.preview_json,
+            validation_record=record.validation_json,
+            distribution_log=record.distribution_json or [],
+            pause_reason=record.pause_reason,
+            paused_at=record.paused_at,
+            auto_pause_enabled=record.auto_pause_enabled,
+            created_at=record.created_at or datetime.now(timezone.utc),
+            updated_at=record.last_active_at or datetime.now(timezone.utc),
+            error_message=record.error_message,
+        )
+
+    def _update_record_from_model(self, record: CreativeProjectRecord, project: CreativeProject, now: datetime) -> None:
+        record.title = project.title
+        record.brief = project.brief
+        record.summary = project.summary
+        record.duration_seconds = project.duration_seconds
+        record.aspect_ratio = project.aspect_ratio
+        record.style = project.style
+        record.video_provider = project.video_provider
+        record.script_text = project.script or project.script_text if hasattr(project, "script_text") else project.script
+        record.storyboard_json = [panel.model_dump(mode="json") for panel in project.storyboard]
+        record.shots_json = [shot.model_dump(mode="json") for shot in project.shots]
+        record.render_manifest_json = project.render_manifest.model_dump(mode="json") if project.render_manifest else None
+        record.preview_json = project.preview_record.model_dump(mode="json") if project.preview_record else None
+        record.validation_json = project.validation_record.model_dump(mode="json") if project.validation_record else None
+        record.distribution_json = [rec.model_dump(mode="json") for rec in project.distribution_log] if project.distribution_log else None
+        record.status = project.state.value
+        record.cost_usd = project.cost_usd
+        record.budget_usd = project.budget_limit_usd
+        record.pause_reason = project.pause_reason
+        record.pre_pause_state = project.pre_pause_state.value if hasattr(project.pre_pause_state, "value") else project.pre_pause_state
+        record.paused_at = project.paused_at
+        record.auto_pause_enabled = project.auto_pause_enabled
+        record.error_message = project.error_message
+        record.last_active_at = now
+
+    def _new_record_from_model(self, project: CreativeProject, now: datetime) -> CreativeProjectRecord:
+        rec = CreativeProjectRecord(
+            external_id=project.id,
+            user_id=project.tenant_id,
+            created_at=now,
+            last_active_at=now,
+            cost_usd=project.cost_usd,
+            budget_usd=project.budget_limit_usd,
+            status=project.state.value,
+        )
+        self._update_record_from_model(rec, project, now)
+        return rec
 
 
 def _build_default_repository() -> BaseCreativeProjectRepository:
