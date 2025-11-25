@@ -37,7 +37,7 @@ from .repository import BaseCreativeProjectRepository, creative_repository
 # ---------------------------------------------------------------------------
 # Older tests/import sites expect `CreativeWorkflow` to live in this module.
 # Keep an alias so dotted imports like
-# `lewis_ai_system.creative.workflow.CreativeWorkflow` continue to work.
+# `nexgen_studio.creative.workflow.CreativeWorkflow` continue to work.
 
 
 class CreativeOrchestrator:

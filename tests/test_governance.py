@@ -1,9 +1,9 @@
 import pytest
 
-from lewis_ai_system.cost_monitor import cost_monitor
-from lewis_ai_system.governance.models import GovernanceEntityType
-from lewis_ai_system.governance.service import GovernanceAnalyticsService
-from lewis_ai_system.instrumentation import TelemetryEvent, telemetry_store, emit_event
+from nexgen_studio.cost_monitor import cost_monitor
+from nexgen_studio.governance.models import GovernanceEntityType
+from nexgen_studio.governance.service import GovernanceAnalyticsService
+from nexgen_studio.instrumentation import TelemetryEvent, telemetry_store, emit_event
 
 
 @pytest.mark.asyncio

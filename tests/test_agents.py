@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from lewis_ai_system.agents import PlanningAgent, QualityAgent, OutputFormatterAgent
-from lewis_ai_system.providers import LLMProvider
+from nexgen_studio.agents import PlanningAgent, QualityAgent, OutputFormatterAgent
+from nexgen_studio.providers import LLMProvider
 
 @pytest.fixture
 def mock_provider():

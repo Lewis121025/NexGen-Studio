@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from lewis_ai_system.config import settings
+from nexgen_studio.config import settings
 
 
 def check_provider_config() -> dict[str, bool]:

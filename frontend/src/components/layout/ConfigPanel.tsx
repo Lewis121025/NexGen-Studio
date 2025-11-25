@@ -188,7 +188,7 @@ function CreativeConfigPanel() {
         <ConfigItem label="AI Provider" description="选择视频生成引擎">
           <Select
             value={creativeConfig.videoProvider}
-            onValueChange={(value: 'runway' | 'pika' | 'runware') =>
+            onValueChange={(value: 'doubao' | 'runway' | 'pika' | 'runware') =>
               updateCreativeConfig({ videoProvider: value })
             }
           >
@@ -196,6 +196,7 @@ function CreativeConfigPanel() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="rounded-google">
+              <SelectItem value="doubao">豆包 Seedance (推荐)</SelectItem>
               <SelectItem value="runway">Runway Gen-3</SelectItem>
               <SelectItem value="pika">Pika 1.5</SelectItem>
               <SelectItem value="runware">Runware</SelectItem>
@@ -210,7 +211,7 @@ function CreativeConfigPanel() {
           <Select
             value={creativeConfig.videoDuration.toString()}
             onValueChange={(value) =>
-              updateCreativeConfig({ videoDuration: parseInt(value) as 3 | 5 | 10 })
+              updateCreativeConfig({ videoDuration: parseInt(value) as 3 | 5 | 10 | 15 })
             }
           >
             <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
@@ -218,8 +219,9 @@ function CreativeConfigPanel() {
             </SelectTrigger>
             <SelectContent className="rounded-google">
               <SelectItem value="3">3 秒</SelectItem>
-              <SelectItem value="5">5 秒 (推荐)</SelectItem>
+              <SelectItem value="5">5 秒</SelectItem>
               <SelectItem value="10">10 秒</SelectItem>
+              <SelectItem value="15">15 秒 (推荐)</SelectItem>
             </SelectContent>
           </Select>
         </ConfigItem>

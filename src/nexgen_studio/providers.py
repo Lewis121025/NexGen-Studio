@@ -287,7 +287,7 @@ class DoubaoVideoProvider:
 
     api_key: str
     base_url: str = "https://ark.cn-beijing.volces.com/api/v3/contents"
-    model: str = "doubao-seedance-1-0-pro-250528"
+    model: str = "doubao-seedance-1-0-pro-fast-251015"
     poll_interval_seconds: float = 5.0
     max_poll_attempts: int = 60  # 最多等待5分钟
     name: str = "doubao"

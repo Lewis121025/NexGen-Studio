@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from lewis_ai_system.general.models import GeneralSessionCreateRequest, GeneralSessionState
-from lewis_ai_system.general.repository import InMemoryGeneralSessionRepository
-from lewis_ai_system.general.session import GeneralModeOrchestrator
+from nexgen_studio.general.models import GeneralSessionCreateRequest, GeneralSessionState
+from nexgen_studio.general.repository import InMemoryGeneralSessionRepository
+from nexgen_studio.general.session import GeneralModeOrchestrator
 
 
 @pytest.mark.asyncio
@@ -29,9 +29,9 @@ async def test_general_session_records_memory_and_compresses_history():
     dummy_runtime.execute.return_value = _Result()
     orchestrator.tool_runtime = dummy_runtime
 
-    with patch("lewis_ai_system.agents.agent_pool.general.react_loop", AsyncMock(return_value="done")):
-        with patch("lewis_ai_system.vector_db.vector_db.store_conversation_memory", AsyncMock()) as mock_store:
-            with patch("lewis_ai_system.agents.agent_pool.formatter.summarize", AsyncMock(return_value="summary")):
+    with patch("nexgen_studio.agents.agent_pool.general.react_loop", AsyncMock(return_value="done")):
+        with patch("nexgen_studio.vector_db.vector_db.store_conversation_memory", AsyncMock()) as mock_store:
+            with patch("nexgen_studio.agents.agent_pool.formatter.summarize", AsyncMock(return_value="summary")):
                 updated = await orchestrator.run_iteration(session.id)
 
     assert updated.state == GeneralSessionState.COMPLETED

@@ -33,9 +33,9 @@ def check_python_version():
 def check_backend_imports():
     """检查后端模块导入"""
     try:
-        from lewis_ai_system.main import app
-        from lewis_ai_system.creative.workflow import CreativeOrchestrator
-        from lewis_ai_system.general.session import GeneralModeOrchestrator
+        from nexgen_studio.main import app
+        from nexgen_studio.creative.workflow import CreativeOrchestrator
+        from nexgen_studio.general.session import GeneralModeOrchestrator
         print_check("后端模块导入", True, "所有核心模块可正常导入")
         return True
     except Exception as e:
@@ -243,7 +243,7 @@ def main():
     if required_passed:
         print("\n[OK] 系统已就绪，可以部署!")
         print("\n快速启动:")
-        print("  后端: uvicorn lewis_ai_system.main:app --host 0.0.0.0 --port 8000")
+        print("  后端: uvicorn nexgen_studio.main:app --host 0.0.0.0 --port 8000")
         print("  前端: cd frontend && npm run dev")
         print("  或使用: docker-compose up -d")
         return 0

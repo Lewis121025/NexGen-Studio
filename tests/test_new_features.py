@@ -4,10 +4,10 @@ import asyncio
 import pytest
 from datetime import datetime, timezone
 
-from lewis_ai_system.vector_db import InMemoryVectorDB, EmbeddingVector
-from lewis_ai_system.redis_cache import InMemoryCache
-from lewis_ai_system.cost_monitor import CostMonitor
-from lewis_ai_system.sandbox import EnhancedSandbox
+from nexgen_studio.vector_db import InMemoryVectorDB, EmbeddingVector
+from nexgen_studio.redis_cache import InMemoryCache
+from nexgen_studio.cost_monitor import CostMonitor
+from nexgen_studio.sandbox import EnhancedSandbox
 
 
 class TestVectorDB:
@@ -236,10 +236,10 @@ os.system("echo bad")
 
 def test_all_imports():
     """Test that all new modules can be imported."""
-    from lewis_ai_system import vector_db
-    from lewis_ai_system import redis_cache
-    from lewis_ai_system import cost_monitor
-    from lewis_ai_system import sandbox
+    from nexgen_studio import vector_db
+    from nexgen_studio import redis_cache
+    from nexgen_studio import cost_monitor
+    from nexgen_studio import sandbox
     
     assert vector_db is not None
     assert redis_cache is not None

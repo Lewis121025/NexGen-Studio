@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # 导入数据库模型
-from lewis_ai_system.database import Base
-from lewis_ai_system.config import settings
+from nexgen_studio.database import Base
+from nexgen_studio.config import settings
 
 # Alembic Config 对象
 config = context.config

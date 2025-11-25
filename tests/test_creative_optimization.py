@@ -2,8 +2,8 @@ import pytest
 import asyncio
 import time
 from unittest.mock import MagicMock, AsyncMock
-from lewis_ai_system.creative.workflow import CreativeOrchestrator, CreativeProject, CreativeProjectState
-from lewis_ai_system.agents import agent_pool
+from nexgen_studio.creative.workflow import CreativeOrchestrator, CreativeProject, CreativeProjectState
+from nexgen_studio.agents import agent_pool
 
 @pytest.mark.asyncio
 async def test_parallel_storyboard_generation():

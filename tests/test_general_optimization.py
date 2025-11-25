@@ -1,10 +1,10 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
-from lewis_ai_system.general.session import GeneralModeOrchestrator, SessionRecordingToolRuntime
-from lewis_ai_system.general.models import GeneralSessionCreateRequest, GeneralSessionState
-from lewis_ai_system.general.repository import InMemoryGeneralSessionRepository
-from lewis_ai_system.tooling import ToolRuntime, Tool, ToolResult
-from lewis_ai_system.agents import agent_pool
+from nexgen_studio.general.session import GeneralModeOrchestrator, SessionRecordingToolRuntime
+from nexgen_studio.general.models import GeneralSessionCreateRequest, GeneralSessionState
+from nexgen_studio.general.repository import InMemoryGeneralSessionRepository
+from nexgen_studio.tooling import ToolRuntime, Tool, ToolResult
+from nexgen_studio.agents import agent_pool
 
 class MockTool(Tool):
     name = "mock_tool"

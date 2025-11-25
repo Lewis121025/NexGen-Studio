@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
-from lewis_ai_system.tooling import WebSearchTool, PythonSandboxTool, WebScrapeTool, ToolRequest
-from lewis_ai_system.providers import TavilySearchProvider, E2BSandboxProvider, FirecrawlScrapeProvider
+from nexgen_studio.tooling import WebSearchTool, PythonSandboxTool, WebScrapeTool, ToolRequest
+from nexgen_studio.providers import TavilySearchProvider, E2BSandboxProvider, FirecrawlScrapeProvider
 
 def test_web_search_tool_uses_provider():
     # Mock provider
@@ -19,7 +19,7 @@ def test_web_search_tool_uses_provider():
 
 def test_sandbox_tool_uses_e2b_provider():
     from unittest.mock import patch
-    from lewis_ai_system.sandbox import EnhancedSandbox
+    from nexgen_studio.sandbox import EnhancedSandbox
     
     # Mock the EnhancedSandbox.execute_python method
     mock_sandbox = MagicMock(spec=EnhancedSandbox)

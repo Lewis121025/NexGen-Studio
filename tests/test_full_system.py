@@ -4,10 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
-from lewis_ai_system.creative.models import CreativeProject, CreativeProjectState
-from lewis_ai_system.general.models import GeneralSession, GeneralSessionState
-from lewis_ai_system.main import app
-from lewis_ai_system.config import settings
+from nexgen_studio.creative.models import CreativeProject, CreativeProjectState
+from nexgen_studio.general.models import GeneralSession, GeneralSessionState
+from nexgen_studio.main import app
+from nexgen_studio.config import settings
 
 client = TestClient(app, base_url="http://localhost", raise_server_exceptions=False)
 
@@ -77,10 +77,10 @@ def mock_providers():
     fake_general = FakeGeneralOrchestrator()
 
     with (
-        patch("lewis_ai_system.routers.creative.creative_orchestrator", new=fake_creative),
-        patch("lewis_ai_system.routers.creative.creative_repository", new=FakeCreativeRepository(fake_creative.projects)),
-        patch("lewis_ai_system.routers.general.general_orchestrator", new=fake_general),
-        patch("lewis_ai_system.routers.general.general_repository", new=FakeGeneralRepository(fake_general.sessions)),
+        patch("nexgen_studio.routers.creative.creative_orchestrator", new=fake_creative),
+        patch("nexgen_studio.routers.creative.creative_repository", new=FakeCreativeRepository(fake_creative.projects)),
+        patch("nexgen_studio.routers.general.general_orchestrator", new=fake_general),
+        patch("nexgen_studio.routers.general.general_repository", new=FakeGeneralRepository(fake_general.sessions)),
     ):
         yield
 

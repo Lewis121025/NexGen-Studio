@@ -19,6 +19,10 @@ import {
   Code,
   ChevronDown,
   ChevronUp,
+  Paperclip,
+  X,
+  FileText,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -40,8 +44,10 @@ export default function GeneralCanvas() {
   const [input, setInput] = useState('');
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [statusText, setStatusText] = useState<string>('AI 正在思考...');
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -120,23 +126,35 @@ export default function GeneralCanvas() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+    if ((!input.trim() && attachedFiles.length === 0) || isStreaming) return;
 
     const session = ensureSession();
     const text = input.trim();
+    const files = [...attachedFiles];
     setInput('');
+    setAttachedFiles([]);
     setStreaming(true);
     setStatusText('AI 正在思考...');
 
+    // 显示用户消息（包含附件信息）
+    const userContent = files.length > 0
+      ? `${text}\n\n📎 附件: ${files.map(f => f.name).join(', ')}`
+      : text;
+
     addMessage(session.id, {
       role: 'user',
-      content: text,
+      content: userContent,
     });
 
     try {
-      const backendId = await ensureBackendSession(text, session.id);
+      const backendId = await ensureBackendSession(text || '处理上传的文件', session.id);
       const form = new FormData();
       form.append('prompt', text);
+      
+      // 添加文件到 FormData
+      files.forEach((file) => {
+        form.append('files', file);
+      });
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -212,6 +230,26 @@ export default function GeneralCanvas() {
     });
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      const newFiles = Array.from(files).slice(0, 5 - attachedFiles.length); // 最多5个文件
+      setAttachedFiles((prev) => [...prev, ...newFiles]);
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const getFileIcon = (file: File) => {
+    if (file.type.startsWith('image/')) return ImageIcon;
+    return FileText;
+  };
+
   return (
     <div className="h-full flex flex-col bg-surface-1">
       {/* 信息列表 */}
@@ -278,19 +316,66 @@ export default function GeneralCanvas() {
       {/* 输入区 */}
       <div className="border-t border-border/30 bg-surface-2/50 backdrop-blur-sm p-4">
         <div className="max-w-3xl mx-auto">
+          {/* 附件预览区 */}
+          {attachedFiles.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {attachedFiles.map((file, index) => {
+                const Icon = getFileIcon(file);
+                return (
+                  <div
+                    key={index}
+                    className="flex items-center gap-2 bg-surface-3 rounded-google px-3 py-1.5 text-sm"
+                  >
+                    <Icon className="w-4 h-4 text-primary" />
+                    <span className="text-foreground truncate max-w-[150px]">
+                      {file.name}
+                    </span>
+                    <button
+                      onClick={() => removeFile(index)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="relative">
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="请输入你的问题、任务或代码... (Shift + Enter 换行)"
-              className="min-h-[80px] max-h-[200px] pr-12 rounded-google-lg bg-surface-1 border-border/50 focus-visible:ring-primary resize-none"
+              className="min-h-[80px] max-h-[200px] pr-24 rounded-google-lg bg-surface-1 border-border/50 focus-visible:ring-primary resize-none"
               disabled={isStreaming}
+            />
+            
+            {/* 文件上传按钮 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.txt,.md,.json,.csv,.py,.js,.ts,.html,.css"
+              onChange={handleFileSelect}
+              className="hidden"
             />
             <Button
               size="icon"
+              variant="ghost"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isStreaming || attachedFiles.length >= 5}
+              className="absolute right-14 bottom-2 rounded-full hover:bg-surface-3"
+              title="上传文件 (最多5个)"
+            >
+              <Paperclip className="w-4 h-4 text-muted-foreground" />
+            </Button>
+
+            <Button
+              size="icon"
               onClick={handleSend}
-              disabled={!input.trim() || isStreaming}
+              disabled={(!input.trim() && attachedFiles.length === 0) || isStreaming}
               className="absolute right-2 bottom-2 rounded-full bg-primary hover:bg-primary/90"
             >
               {isStreaming ? (
@@ -302,7 +387,7 @@ export default function GeneralCanvas() {
           </div>
 
           <div className="mt-2 text-xs text-muted-foreground text-center">
-            Lewis AI 会实时推理与调用工具，结果将流式返回
+            Lewis AI 会实时推理与调用工具，结果将流式返回 | 支持上传图片和文档
           </div>
         </div>
       </div>
@@ -441,6 +526,14 @@ function EmptyState() {
         {suggestions.map((suggestion, index) => (
           <button
             key={index}
+            onClick={() => {
+              const inputEl = document.querySelector('textarea');
+              if (inputEl) {
+                (inputEl as HTMLTextAreaElement).value = suggestion;
+                inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                inputEl.focus();
+              }
+            }}
             className="text-left p-4 bg-surface-2 hover:bg-surface-3 rounded-google border border-border/30 transition-colors"
           >
             <p className="text-sm text-foreground">{suggestion}</p>

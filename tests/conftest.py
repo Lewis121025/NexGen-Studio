@@ -12,11 +12,11 @@ if str(SRC) not in sys.path:
 @pytest.fixture(scope="session", autouse=True)
 def configure_test_providers():
     """Force providers to run in mock mode during pytest."""
-    from lewis_ai_system.config import settings
-    from lewis_ai_system import providers
-    from lewis_ai_system.agents import agent_pool
-    from lewis_ai_system.creative import workflow as creative_workflow
-    from lewis_ai_system.general import session as general_session
+    from nexgen_studio.config import settings
+    from nexgen_studio import providers
+    from nexgen_studio.agents import agent_pool
+    from nexgen_studio.creative import workflow as creative_workflow
+    from nexgen_studio.general import session as general_session
 
     original_mode = settings.llm_provider_mode
     original_key = settings.openrouter_api_key

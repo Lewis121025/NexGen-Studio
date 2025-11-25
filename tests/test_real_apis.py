@@ -1,7 +1,7 @@
 import pytest
 import asyncio
-from lewis_ai_system.config import settings
-from lewis_ai_system.providers import (
+from nexgen_studio.config import settings
+from nexgen_studio.providers import (
     TavilySearchProvider,
     FirecrawlScrapeProvider,
     E2BSandboxProvider

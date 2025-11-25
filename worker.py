@@ -8,8 +8,8 @@ import asyncio
 import logging
 from arq import run_worker
 
-from lewis_ai_system.task_queue import WorkerSettings
-from lewis_ai_system.instrumentation import get_logger
+from nexgen_studio.task_queue import WorkerSettings
+from nexgen_studio.instrumentation import get_logger
 
 logger = get_logger()
 

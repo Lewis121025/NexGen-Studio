@@ -1,7 +1,7 @@
 import pytest
 
-from lewis_ai_system import providers
-from lewis_ai_system.config import settings
+from nexgen_studio import providers
+from nexgen_studio.config import settings
 
 
 @pytest.fixture(autouse=True)

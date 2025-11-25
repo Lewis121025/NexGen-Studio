@@ -1,13 +1,13 @@
 import pytest
 
-from lewis_ai_system.agents import agent_pool
-from lewis_ai_system.general.models import (
+from nexgen_studio.agents import agent_pool
+from nexgen_studio.general.models import (
     GeneralSessionCreateRequest,
     GeneralSessionState,
 )
-from lewis_ai_system.general.repository import InMemoryGeneralSessionRepository
-from lewis_ai_system.general.session import GeneralModeOrchestrator
-from lewis_ai_system.tooling import PythonSandboxTool, ToolRequest, ToolRuntime, WebSearchTool
+from nexgen_studio.general.repository import InMemoryGeneralSessionRepository
+from nexgen_studio.general.session import GeneralModeOrchestrator
+from nexgen_studio.tooling import PythonSandboxTool, ToolRequest, ToolRuntime, WebSearchTool
 
 
 @pytest.mark.asyncio

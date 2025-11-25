@@ -4,14 +4,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from lewis_ai_system.agents import agent_pool
-from lewis_ai_system.creative.models import CreativeProjectCreateRequest, CreativeProjectState
-from lewis_ai_system.creative.repository import InMemoryCreativeProjectRepository
-from lewis_ai_system.creative.workflow import CreativeOrchestrator
-from lewis_ai_system.general.models import GeneralSessionCreateRequest, GeneralSessionState
-from lewis_ai_system.general.repository import InMemoryGeneralSessionRepository
-from lewis_ai_system.general.session import GeneralModeOrchestrator
-from lewis_ai_system.storage import ArtifactStorage
+from nexgen_studio.agents import agent_pool
+from nexgen_studio.creative.models import CreativeProjectCreateRequest, CreativeProjectState
+from nexgen_studio.creative.repository import InMemoryCreativeProjectRepository
+from nexgen_studio.creative.workflow import CreativeOrchestrator
+from nexgen_studio.general.models import GeneralSessionCreateRequest, GeneralSessionState
+from nexgen_studio.general.repository import InMemoryGeneralSessionRepository
+from nexgen_studio.general.session import GeneralModeOrchestrator
+from nexgen_studio.storage import ArtifactStorage
 
 
 class DummyToolRuntime:

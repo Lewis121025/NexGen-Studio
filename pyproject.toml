@@ -1,8 +1,8 @@
 [project]
-name = "lewis-ai-system"
-version = "0.2.0"
-description = "Production-ready Lewis AI System with vector DB, Redis cache, cost monitoring, and enhanced sandbox."
-authors = [{ name = "Lewis Engineering", email = "engineering@example.com" }]
+name = "nexgen-studio"
+version = "1.0.0"
+description = "NexGen Studio - AI-powered video generation and intelligent assistant platform"
+authors = [{ name = "NexGen Studio", email = "dev@nexgen.studio" }]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111.0",

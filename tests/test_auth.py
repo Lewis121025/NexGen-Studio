@@ -2,8 +2,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
-from lewis_ai_system import auth
-from lewis_ai_system.config import settings
+from nexgen_studio import auth
+from nexgen_studio.config import settings
 
 
 @pytest.mark.asyncio

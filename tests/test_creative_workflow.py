@@ -2,12 +2,12 @@ import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock
 
-from lewis_ai_system.creative.models import CreativeProjectCreateRequest, CreativeProjectState
-from lewis_ai_system.creative.repository import InMemoryCreativeProjectRepository
-from lewis_ai_system.creative.workflow import CreativeOrchestrator
-from lewis_ai_system.storage import ArtifactStorage
-from lewis_ai_system.providers import LLMProvider
-from lewis_ai_system.agents import agent_pool
+from nexgen_studio.creative.models import CreativeProjectCreateRequest, CreativeProjectState
+from nexgen_studio.creative.repository import InMemoryCreativeProjectRepository
+from nexgen_studio.creative.workflow import CreativeOrchestrator
+from nexgen_studio.storage import ArtifactStorage
+from nexgen_studio.providers import LLMProvider
+from nexgen_studio.agents import agent_pool
 
 @pytest.fixture
 def mock_llm_provider():

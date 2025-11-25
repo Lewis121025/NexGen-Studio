@@ -362,27 +362,47 @@ class CreativeAgent:
             ]
 
     async def generate_panel_visual(self, description: str) -> str:
+        """使用豆包 Seedream 模型生成分镜板图片。"""
+        import httpx
+        import asyncio
+        
         if settings.llm_provider_mode == "mock":
             return f"https://placeholder.lewis.ai/{hash(description)}.jpg"
 
-        if not settings.openrouter_api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is required for storyboard visualization.")
+        if not settings.doubao_api_key:
+            raise RuntimeError("DOUBAO_API_KEY is required for storyboard visualization.")
 
-        if self.openai_client is None:
-            # Use OpenRouter-compatible OpenAI client for image generation
-            self.openai_client = AsyncOpenAI(
-                api_key=settings.openrouter_api_key,
-                base_url="https://openrouter.ai/api/v1",
-            )
-
-        response = await self.openai_client.images.generate(
-            model="dall-e-3",
-            prompt=f"Storyboard sketch: {description}",
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-        return response.data[0].url
+        # 豆包文生图 API
+        base_url = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+        headers = {
+            "Authorization": f"Bearer {settings.doubao_api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        payload = {
+            "model": "doubao-seedream-4-0-250828",
+            "prompt": f"Storyboard sketch, cinematic shot: {description}",
+            "size": "1024x1024",
+            "response_format": "url",
+            "n": 1,
+        }
+        
+        client_kwargs: dict[str, object] = {"timeout": 120}
+        if settings.httpx_proxies:
+            client_kwargs["proxy"] = settings.httpx_proxies
+            
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(base_url, json=payload, headers=headers)
+            if response.status_code != 200:
+                error_body = response.text
+                logger.error(f"Doubao image API error: {response.status_code} - {error_body}")
+                raise RuntimeError(f"Doubao image API returned {response.status_code}: {error_body}")
+            
+            data = response.json()
+            # 豆包返回格式: {"created": ..., "data": [{"url": "..."}]}
+            if "data" in data and len(data["data"]) > 0:
+                return data["data"][0].get("url", "")
+            raise RuntimeError(f"Unexpected Doubao image response: {data}")
 
 
 class GeneralAgent:
