@@ -10,8 +10,8 @@ class MockTool(Tool):
     name = "mock_tool"
     description = "A mock tool"
     
-    def run(self, payload):
-        return ToolResult(output="mock_result", cost_usd=0.01)
+    async def run(self, payload):
+        return ToolResult(output={"text": "mock_result"}, cost_usd=0.01)
 
 @pytest.fixture
 def mock_llm_provider():

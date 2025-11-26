@@ -173,9 +173,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_keys(self) -> "Settings":
-        """������������������ʵ�� API Keys,������ʹ�� Mock ģʽ"""
+        """验证生产环境必需的 API Keys，禁止使用 Mock 模式"""
         if self.environment == "production":
-            # ������ AI Provider Keys
+            # 验证 AI Provider Keys
             if self.llm_provider_mode == "mock":
                 raise ValueError(
                     "Production cannot run with the mock LLM provider. "
@@ -194,18 +194,18 @@ class Settings(BaseSettings):
                     "Populate them in the environment before starting the service."
                 )
 
-            # ������ݿ�����
+            # 验证数据库配置
             if not self.database_url:
                 raise ValueError(
-                    "���������������� DATABASE_URL! "
-                    "������ PostgreSQL ���ݿ������ַ���"
+                    "生产环境必须配置 DATABASE_URL! "
+                    "请提供 PostgreSQL 数据库连接地址。"
                 )
 
-            # ��� Secret Key
+            # 验证 Secret Key
             if self.secret_key == "dev-secret-key-change-in-production":
                 raise ValueError(
-                    "�������������޸� SECRET_KEY! "
-                    "������һ����ȫ�������Կ (����ʹ�� openssl rand -hex 32)"
+                    "生产环境必须修改 SECRET_KEY! "
+                    "请生成一个安全的随机密钥 (例如使用 openssl rand -hex 32)"
                 )
 
         return self

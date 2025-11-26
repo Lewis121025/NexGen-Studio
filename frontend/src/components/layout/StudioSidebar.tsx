@@ -478,9 +478,10 @@ function AssetLibrary({ assets }: AssetLibraryProps) {
             {/* 缩略图 */}
             {asset.thumbnailUrl && (
               <div className="aspect-video bg-surface-3 relative overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={asset.thumbnailUrl}
-                  alt={asset.title}
+                  alt={asset.title || 'Asset thumbnail'}
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />

@@ -3,21 +3,25 @@ from unittest.mock import MagicMock, AsyncMock
 from nexgen_studio.tooling import WebSearchTool, PythonSandboxTool, WebScrapeTool, ToolRequest
 from nexgen_studio.providers import TavilySearchProvider, E2BSandboxProvider, FirecrawlScrapeProvider
 
-def test_web_search_tool_uses_provider():
+
+@pytest.mark.asyncio
+async def test_web_search_tool_uses_provider():
     # Mock provider
     mock_provider = MagicMock(spec=TavilySearchProvider)
     mock_provider.search = AsyncMock(return_value="Search results")
     mock_provider.name = "tavily"
     
     tool = WebSearchTool()
-    tool.provider = mock_provider # Inject mock
+    tool.provider = mock_provider  # Inject mock
     
-    result = tool.run({"query": "test"})
+    result = await tool.run({"query": "test"})
     
     assert result.output["result"] == "Search results"
     mock_provider.search.assert_called_once_with("test")
 
-def test_sandbox_tool_uses_e2b_provider():
+
+@pytest.mark.asyncio
+async def test_sandbox_tool_uses_e2b_provider():
     from unittest.mock import patch
     from nexgen_studio.sandbox import EnhancedSandbox
     
@@ -35,12 +39,14 @@ def test_sandbox_tool_uses_e2b_provider():
     # Inject mock sandbox
     tool._sandbox = mock_sandbox
     
-    result = tool.run({"code": "print('Hello')"})
+    result = await tool.run({"code": "print('Hello')"})
     
     assert result.output["stdout"] == "Hello"
     mock_sandbox.execute_python.assert_called_once()
 
-def test_web_scrape_tool_uses_provider():
+
+@pytest.mark.asyncio
+async def test_web_scrape_tool_uses_provider():
     mock_provider = MagicMock(spec=FirecrawlScrapeProvider)
     mock_provider.scrape = AsyncMock(return_value="# Markdown Content")
     mock_provider.name = "firecrawl"
@@ -48,32 +54,34 @@ def test_web_scrape_tool_uses_provider():
     tool = WebScrapeTool()
     tool.provider = mock_provider
     
-    result = tool.run({"url": "http://example.com"})
+    result = await tool.run({"url": "http://example.com"})
     
     assert result.output["content"] == "# Markdown Content"
     mock_provider.scrape.assert_called_once_with("http://example.com")
 
 
-def test_web_search_tool_provider_override(monkeypatch):
+@pytest.mark.asyncio
+async def test_web_search_tool_provider_override(monkeypatch):
     tool = WebSearchTool()
     mock_provider = MagicMock(spec=TavilySearchProvider)
     mock_provider.search = AsyncMock(return_value="override result")
     tool._provider_factory = MagicMock(return_value=mock_provider)
 
-    result = tool.run({"query": "hello", "provider": "tavily"})
+    result = await tool.run({"query": "hello", "provider": "tavily"})
 
     assert result.output["result"] == "override result"
     tool._provider_factory.assert_called_once_with("tavily")
     mock_provider.search.assert_called_once_with("hello")
 
 
-def test_web_scrape_tool_provider_override():
+@pytest.mark.asyncio
+async def test_web_scrape_tool_provider_override():
     tool = WebScrapeTool()
     mock_provider = MagicMock(spec=FirecrawlScrapeProvider)
     mock_provider.scrape = AsyncMock(return_value="content")
     tool._provider_factory = MagicMock(return_value=mock_provider)
 
-    result = tool.run({"url": "http://example.com", "provider": "firecrawl"})
+    result = await tool.run({"url": "http://example.com", "provider": "firecrawl"})
 
     assert result.output["content"] == "content"
     tool._provider_factory.assert_called_once_with("firecrawl")

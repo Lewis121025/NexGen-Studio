@@ -1,13 +1,20 @@
 """Tests for new features: vector DB, Redis, cost monitoring, sandbox."""
 
 import asyncio
+import os
 import pytest
 from datetime import datetime, timezone
 
 from nexgen_studio.vector_db import InMemoryVectorDB, EmbeddingVector
 from nexgen_studio.redis_cache import InMemoryCache
 from nexgen_studio.cost_monitor import CostMonitor
-from nexgen_studio.sandbox import EnhancedSandbox
+from nexgen_studio.config import settings
+
+# Skip sandbox tests if E2B API key is not configured
+skip_sandbox_tests = pytest.mark.skipif(
+    not settings.e2b_api_key,
+    reason="E2B_API_KEY not configured"
+)
 
 
 class TestVectorDB:
@@ -166,11 +173,13 @@ class TestCostMonitor:
         assert reason == "paused_budget"
 
 
+@skip_sandbox_tests
 class TestSandbox:
     """Test enhanced sandbox functionality."""
     
     def test_execute_python_basic(self):
         """Test basic Python execution."""
+        from nexgen_studio.sandbox import EnhancedSandbox
         sandbox = EnhancedSandbox(timeout_seconds=5)
         
         # Use expression instead of assignment to get result
@@ -184,6 +193,7 @@ class TestSandbox:
     
     def test_execute_python_with_output(self):
         """Test Python execution with stdout."""
+        from nexgen_studio.sandbox import EnhancedSandbox
         sandbox = EnhancedSandbox(timeout_seconds=5)
         
         code = """
@@ -198,6 +208,7 @@ print("Hello, sandbox!")
     
     def test_execute_python_timeout(self):
         """Test timeout handling."""
+        from nexgen_studio.sandbox import EnhancedSandbox
         sandbox = EnhancedSandbox(timeout_seconds=1)
         
         # Use an infinite loop that should timeout
@@ -213,6 +224,7 @@ while True:
     
     def test_execute_python_restricted(self):
         """Test restricted builtins."""
+        from nexgen_studio.sandbox import EnhancedSandbox
         sandbox = EnhancedSandbox(timeout_seconds=5)
         
         # Should work with allowed functions

@@ -20,8 +20,8 @@ async def test_general_session_runs_iteration():
     orchestrator = GeneralModeOrchestrator(repository=repo, tool_runtime=runtime)
 
     with pytest.MonkeyPatch.context() as patcher:
-        async def fake_react_loop(goal, recording_runtime, max_steps=None):
-            recording_runtime.execute(
+        async def fake_react_loop(goal, recording_runtime, max_steps=None, conversation_history=None):
+            await recording_runtime.execute(
                 ToolRequest(name="python_sandbox", input={"code": "print(2+2)"})
             )
             return "Finished"
@@ -44,7 +44,7 @@ async def test_general_session_completes_when_limit_reached():
 
     orchestrator = GeneralModeOrchestrator(repository=repo, tool_runtime=runtime)
     with pytest.MonkeyPatch.context() as patcher:
-        async def fake_react_loop(goal, recording_runtime, max_steps=None):
+        async def fake_react_loop(goal, recording_runtime, max_steps=None, conversation_history=None):
             return "Done"
 
         patcher.setattr(agent_pool.general, "react_loop", fake_react_loop)

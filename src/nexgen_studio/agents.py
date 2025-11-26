@@ -13,7 +13,10 @@ from typing import Any, Sequence
 from openai import AsyncOpenAI
 
 from .config import settings
+from .instrumentation import get_logger
 from .providers import LLMProvider, default_llm_provider
+
+logger = get_logger()
 
 
 class PlanningAgent:

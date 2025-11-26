@@ -80,6 +80,7 @@ export default function CreativeCanvas() {
         setSessionBackendId(currentSessionId, urlProjectId);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSessionId, currentSession?.backendId, urlProjectId]);
 
   const projectQuery = useQuery({
@@ -535,9 +536,10 @@ function VisualizingStage({
             className="group aspect-video bg-surface-3 rounded-google-lg overflow-hidden border border-border/30 relative"
           >
             {panel.visual_reference_path && !imageErrors.has(panel.scene_number) ? (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={panel.visual_reference_path}
-                alt={panel.description}
+                alt={panel.description || 'Storyboard panel'}
                 className="w-full h-full object-cover"
                 onError={() => handleImageError(panel.scene_number)}
               />
