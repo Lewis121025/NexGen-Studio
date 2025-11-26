@@ -93,14 +93,11 @@ async def send_message_with_files(
     事件顺序：thinking -> processing -> completed/failed，data 字段为 JSON。
     """
     from ..instrumentation import get_logger
+    from ..serialization import sse_event as sse
 
     logger = get_logger()
 
     async def event_stream() -> AsyncGenerator[bytes, None]:
-        def sse(data: dict[str, object]) -> bytes:
-            import json as _json
-            return f"data: {_json.dumps(data)}\n\n".encode("utf-8")
-
         try:
             session = await general_repository.get(session_id)
         except KeyError as exc:
@@ -154,7 +151,7 @@ async def send_message_with_files(
             yield sse(
                 {
                     "status": "completed",
-                    "session": GeneralSessionResponse(session=session).model_dump(),
+                    "session": session.model_dump(mode="json"),
                 }
             )
         except Exception as exc:

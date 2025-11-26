@@ -2,6 +2,11 @@
 
 本模块实现了创作模式的分阶段工作流，从简报接收、脚本生成、分镜规划、
 视频渲染到最终交付的完整流程。
+
+新增一致性保障功能：
+- 风格锚定：所有片段使用统一的视觉风格描述
+- 角色锁定：自动提取并固定角色特征
+- 场景延续：使用上一帧作为下一片段的参考（如果 API 支持）
 """
 
 from __future__ import annotations
@@ -16,9 +21,10 @@ from ..agents import agent_pool
 from ..config import settings
 from ..cost_monitor import cost_monitor
 from ..costs import cost_tracker
-from ..instrumentation import TelemetryEvent, emit_event
+from ..instrumentation import TelemetryEvent, emit_event, get_logger
 from ..providers import get_video_provider
 from ..storage import ArtifactStorage, default_storage
+from .consistency import ConsistencyEnhancer, ConsistencyProfile
 from .models import (
     CreativeProject,
     CreativeProjectCreateRequest,
@@ -31,6 +37,8 @@ from .models import (
     ValidationRecord,
 )
 from .repository import BaseCreativeProjectRepository, creative_repository
+
+logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Backward compatibility exports
@@ -90,6 +98,30 @@ class CreativeOrchestrator:
         await self.repository.upsert(project)
         return project
 
+    async def regenerate_storyboard(self, project_id: str) -> CreativeProject:
+        """重新生成分镜图片（用户对当前分镜不满意时调用）"""
+        project = await self.repository.get(project_id)
+        
+        # 只有在分镜已生成的状态下才能重新生成
+        if project.state not in (CreativeProjectState.STORYBOARD_READY, CreativeProjectState.STORYBOARD_PENDING):
+            raise ValueError("Can only regenerate storyboard when in STORYBOARD_READY or STORYBOARD_PENDING state")
+        
+        if not project.script:
+            raise ValueError("Script is required to regenerate storyboard")
+        
+        # 清空现有分镜
+        project.storyboard = []
+        project.mark_state(CreativeProjectState.STORYBOARD_PENDING)
+        
+        # 重新生成分镜
+        if await self._generate_storyboard(project):
+            await self.repository.upsert(project)
+            return project
+        
+        project.mark_state(CreativeProjectState.STORYBOARD_READY)
+        await self.repository.upsert(project)
+        return project
+
     async def advance(self, project_id: str) -> CreativeProject:
         """Advance project to the next automatic stage."""
         project = await self.repository.get(project_id)
@@ -106,6 +138,13 @@ class CreativeOrchestrator:
                     await self.repository.upsert(project)
                     return project
                 project.mark_state(CreativeProjectState.SCRIPT_REVIEW)
+            elif project.state == CreativeProjectState.SCRIPT_REVIEW:
+                # 脚本审核状态 - 用户点击"生成分镜图片"时自动批准并生成分镜
+                project.mark_state(CreativeProjectState.STORYBOARD_PENDING)
+                if await self._generate_storyboard(project):
+                    await self.repository.upsert(project)
+                    return project
+                project.mark_state(CreativeProjectState.STORYBOARD_READY)
             elif project.state == CreativeProjectState.STORYBOARD_PENDING:
                 if await self._generate_storyboard(project):
                     await self.repository.upsert(project)
@@ -191,14 +230,72 @@ class CreativeOrchestrator:
 
         emit_event(TelemetryEvent(name="creative_shots_start", attributes={"project_id": project.id}))
         provider = self._video_provider_factory(self.video_provider_name)
-        tasks = [self._generate_single_shot_asset(provider, project, panel) for panel in project.storyboard]
-        project.shots = await asyncio.gather(*tasks)
+        
+        # 创建一致性增强器
+        consistency_enhancer = ConsistencyEnhancer.from_brief_and_script(
+            brief=project.brief,
+            script=project.script or "",
+            style=project.style,
+        )
+        
+        # 检查是否使用顺序生成模式（图生视频，保证更好的连贯性）
+        use_sequential = settings.video_sequential_mode
+        
+        if use_sequential:
+            # 顺序生成：每个片段使用上一个的最后一帧作为起始
+            logger.info(f"Using sequential generation mode for project {project.id}")
+            project.shots = await self._generate_shots_sequential(
+                provider, project, consistency_enhancer
+            )
+        else:
+            # 并行生成：更快但一致性稍差
+            logger.info(f"Using parallel generation mode for project {project.id}")
+            tasks = [
+                self._generate_single_shot_asset(
+                    provider, project, panel, consistency_enhancer
+                ) 
+                for panel in project.storyboard
+            ]
+            project.shots = await asyncio.gather(*tasks)
+        
         self.storage.save_json(
             f"{project.id}/shots.json",
             [shot.model_dump(mode="json") for shot in project.shots],
         )
         project.mark_state(CreativeProjectState.RENDER_PENDING)
         emit_event(TelemetryEvent(name="creative_shots_complete", attributes={"project_id": project.id}))
+        return self._record_cost_guardrail(project, amount=2.5, phase="shots")
+    
+    async def _generate_shots_sequential(
+        self,
+        provider,
+        project: CreativeProject,
+        consistency_enhancer: ConsistencyEnhancer,
+    ) -> list[GeneratedShotAsset]:
+        """顺序生成视频片段，使用上一帧保持连贯性。"""
+        shots = []
+        total_panels = len(project.storyboard)
+        
+        for i, panel in enumerate(project.storyboard):
+            logger.info(f"Sequential generation: scene {i+1}/{total_panels}")
+            
+            # 获取上一场景的描述（用于延续性提示）
+            prev_desc = project.storyboard[i-1].description if i > 0 else None
+            
+            shot = await self._generate_single_shot_asset(
+                provider, project, panel, consistency_enhancer,
+                previous_scene_description=prev_desc,
+            )
+            
+            # 如果生成成功且有最后一帧，更新一致性增强器
+            if shot.status == "completed" and shot.metadata:
+                last_frame = shot.metadata.get("last_frame_url")
+                if last_frame:
+                    consistency_enhancer.update_last_frame(last_frame, panel.description)
+            
+            shots.append(shot)
+        
+        return shots
         return self._record_cost_guardrail(project, amount=2.5, phase="shots")
 
     async def _render_master(self, project: CreativeProject) -> bool:
@@ -406,17 +503,36 @@ class CreativeOrchestrator:
         provider,
         project: CreativeProject,
         panel: StoryboardPanel,
+        consistency_enhancer: ConsistencyEnhancer | None = None,
+        previous_scene_description: str | None = None,
     ) -> GeneratedShotAsset:
-        prompt = self._build_shot_prompt(project, panel)
+        # 使用一致性增强的提示词（如果可用）
+        if consistency_enhancer:
+            prompt = consistency_enhancer.build_consistent_prompt(
+                scene_description=panel.description,
+                scene_number=panel.scene_number,
+                total_scenes=len(project.storyboard),
+                camera_notes=panel.camera_notes,
+                previous_scene_description=previous_scene_description,
+            )
+            # 获取图生视频参数（如果有上一帧）
+            extra_params = consistency_enhancer.get_image_to_video_params() or {}
+        else:
+            prompt = self._build_shot_prompt(project, panel)
+            extra_params = {}
+        
         try:
             result = await provider.generate_video(
                 prompt,
                 duration_seconds=panel.duration_seconds,
+                aspect_ratio=project.aspect_ratio,
                 quality="preview",
+                **extra_params,
             )
             asset_payload = {
                 "panel": panel.model_dump(mode="json"),
                 "provider_result": result,
+                "consistency_enhanced": consistency_enhancer is not None,
             }
             asset_path = self.storage.save_json(
                 f"{project.id}/shots/scene-{panel.scene_number}.json",
@@ -443,6 +559,7 @@ class CreativeOrchestrator:
             )
 
     def _build_shot_prompt(self, project: CreativeProject, panel: StoryboardPanel) -> str:
+        """构建基础提示词（不使用一致性增强时的回退方案）"""
         return (
             f"{project.style} style scene {panel.scene_number}: {panel.description}. "
             f"Camera notes: {panel.camera_notes or 'Auto'}. Duration {panel.duration_seconds}s."

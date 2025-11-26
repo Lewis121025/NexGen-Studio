@@ -326,15 +326,25 @@ class CreativeAgent:
             
         Returns:
             分镜列表，每个分镜包含描述、视觉提示和预估时长
+            
+        Note:
+            由于视频生成 API 限制，每个片段最长 5 秒。
+            如果用户请求 10 秒，会生成 2 个 5 秒片段。
         """
+        # 计算需要的片段数量（每个片段最多5秒）
+        MAX_CLIP_DURATION = 5
+        num_clips = max(1, (total_duration + MAX_CLIP_DURATION - 1) // MAX_CLIP_DURATION)
+        clip_duration = min(MAX_CLIP_DURATION, total_duration // num_clips) if num_clips > 0 else MAX_CLIP_DURATION
+        
         prompt = (
-            "Analyze the following script and split it into distinct scenes.\n"
+            f"Analyze the following script and split it into exactly {num_clips} distinct scenes.\n"
+            f"Each scene should be about {clip_duration} seconds long.\n"
             "Return a JSON object with a key 'scenes', where each item is an object containing:\n"
             "- 'description': A concise visual description of the action and setting.\n"
             "- 'visual_cues': Specific camera or lighting notes based on the style.\n"
-            "- 'estimated_duration': Estimated duration in seconds (integer).\n\n"
+            f"- 'estimated_duration': Should be {clip_duration} seconds for each scene.\n\n"
             f"Script:\n{script}\n\n"
-            "Ensure the total duration roughly matches the target. Return ONLY valid JSON."
+            f"IMPORTANT: Generate exactly {num_clips} scenes, each {clip_duration} seconds. Return ONLY valid JSON."
         )
         response = await self.provider.complete(prompt, temperature=0.1)
         
@@ -348,18 +358,35 @@ class CreativeAgent:
         try:
             import json
             data = json.loads(text)
-            return data.get("scenes", [])
+            scenes = data.get("scenes", [])
+            # 确保每个场景的时长不超过限制
+            for scene in scenes:
+                scene["estimated_duration"] = min(scene.get("estimated_duration", clip_duration), MAX_CLIP_DURATION)
+            return scenes
         except Exception:
-            # 回退方案：按段落拆分
+            # 回退方案：按段落拆分，但确保生成正确数量的片段
             chunks = [c.strip() for c in script.split("\n\n") if c.strip()]
-            return [
-                {
-                    "description": c,
-                    "visual_cues": "Standard shot",
-                    "estimated_duration": max(total_duration // max(len(chunks), 1), 5)
-                }
-                for c in chunks
-            ]
+            # 如果段落数不匹配，重新分配
+            if len(chunks) < num_clips:
+                # 不够片段，需要拆分
+                result = []
+                for i in range(num_clips):
+                    chunk_idx = i * len(chunks) // num_clips
+                    result.append({
+                        "description": chunks[chunk_idx] if chunk_idx < len(chunks) else f"Scene {i+1}",
+                        "visual_cues": "Standard shot",
+                        "estimated_duration": clip_duration
+                    })
+                return result
+            else:
+                return [
+                    {
+                        "description": chunks[i],
+                        "visual_cues": "Standard shot",
+                        "estimated_duration": clip_duration
+                    }
+                    for i in range(min(len(chunks), num_clips))
+                ]
 
     async def generate_panel_visual(self, description: str) -> str:
         """使用豆包 Seedream 模型生成分镜板图片。"""
@@ -370,7 +397,9 @@ class CreativeAgent:
             return f"https://placeholder.lewis.ai/{hash(description)}.jpg"
 
         if not settings.doubao_api_key:
-            raise RuntimeError("DOUBAO_API_KEY is required for storyboard visualization.")
+            # 如果没有配置豆包 API，返回占位图片 URL
+            logger.warning("DOUBAO_API_KEY not configured, using placeholder image")
+            return f"https://via.placeholder.com/1024x1024.png?text=Scene:{description[:30].replace(' ', '+')}"
 
         # 豆包文生图 API
         base_url = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
@@ -391,18 +420,24 @@ class CreativeAgent:
         if settings.httpx_proxies:
             client_kwargs["proxy"] = settings.httpx_proxies
             
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.post(base_url, json=payload, headers=headers)
-            if response.status_code != 200:
-                error_body = response.text
-                logger.error(f"Doubao image API error: {response.status_code} - {error_body}")
-                raise RuntimeError(f"Doubao image API returned {response.status_code}: {error_body}")
-            
-            data = response.json()
-            # 豆包返回格式: {"created": ..., "data": [{"url": "..."}]}
-            if "data" in data and len(data["data"]) > 0:
-                return data["data"][0].get("url", "")
-            raise RuntimeError(f"Unexpected Doubao image response: {data}")
+        try:
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                response = await client.post(base_url, json=payload, headers=headers)
+                if response.status_code != 200:
+                    error_body = response.text
+                    logger.error(f"Doubao image API error: {response.status_code} - {error_body}")
+                    # 返回占位图片而不是抛出异常
+                    return f"https://via.placeholder.com/1024x1024.png?text=API+Error"
+                
+                data = response.json()
+                # 豆包返回格式: {"created": ..., "data": [{"url": "..."}]}
+                if "data" in data and len(data["data"]) > 0:
+                    return data["data"][0].get("url", "")
+                logger.error(f"Unexpected Doubao image response: {data}")
+                return f"https://via.placeholder.com/1024x1024.png?text=Unexpected+Response"
+        except Exception as e:
+            logger.error(f"Doubao image generation failed: {e}")
+            return f"https://via.placeholder.com/1024x1024.png?text=Generation+Failed"
 
 
 class GeneralAgent:
@@ -420,13 +455,20 @@ class GeneralAgent:
         """
         self.provider = provider or default_llm_provider
 
-    async def react_loop(self, query: str, tool_runtime: Any, max_steps: int = 5) -> str:
+    async def react_loop(
+        self, 
+        query: str, 
+        tool_runtime: Any, 
+        max_steps: int = 5,
+        conversation_history: list[str] | None = None
+    ) -> str:
         """执行 ReAct 循环来回答查询，使用可用工具。
         
         Args:
             query: 用户查询
             tool_runtime: 工具运行时实例
             max_steps: 最大执行步数，默认 5
+            conversation_history: 对话历史记录列表，可选
             
         Returns:
             最终答案文本
@@ -447,21 +489,39 @@ class GeneralAgent:
         tools_desc = "\n".join(tools_desc_list)
         
         system_prompt = (
-            "You are a helpful AI assistant with access to the following tools:\n"
+            "你是一个知识渊博、乐于助人的AI助手。你的回答应该详细、全面、有深度。\n\n"
+            "你可以使用以下工具来帮助回答问题：\n"
             f"{tools_desc}\n\n"
-            "Use the following format:\n"
-            "Question: the input question you must answer\n"
-            "Thought: you should always think about what to do\n"
-            "Action: the action to take, should be one of the tool names\n"
-            "Action Input: the input to the action as a valid JSON string matching the tool's parameter schema\n"
-            "Observation: the result of the action\n"
-            "... (this Thought/Action/Action Input/Observation can repeat N times)\n"
-            "Thought: I now know the final answer\n"
-            "Final Answer: the final answer to the original input question\n\n"
-            "Begin!"
+            "重要指导原则：\n"
+            "1. 始终使用与用户相同的语言回复（中文提问用中文回答）\n"
+            "2. 提供详尽、结构清晰的回答，不要过于简短\n"
+            "3. 在适当的时候使用列表、分点说明来组织信息\n"
+            "4. 如果问题复杂，先分析问题的各个方面，再给出综合答案\n"
+            "5. 提供实用的例子或建议来增强回答的价值\n\n"
+            "使用以下格式：\n"
+            "Question: 你需要回答的问题\n"
+            "Thought: 你应该思考要做什么\n"
+            "Action: 要采取的行动，应该是工具名称之一\n"
+            "Action Input: 行动的输入，需要是符合工具参数schema的有效JSON字符串\n"
+            "Observation: 行动的结果\n"
+            "... (Thought/Action/Action Input/Observation 可以重复N次)\n"
+            "Thought: 我现在知道最终答案了\n"
+            "Final Answer: 对原始问题的完整、详细的最终答案（使用与用户相同的语言，确保回答有足够的深度和细节）\n\n"
+            "注意：Final Answer 应该是一个完整、详细的回答，而不是简单的几个字。\n"
+            "开始！"
         )
 
-        history = f"{system_prompt}\n\nQuestion: {query}\n"
+        # 构建包含历史记录的上下文
+        history = f"{system_prompt}\n\n"
+        
+        # 添加对话历史作为上下文
+        if conversation_history:
+            history += "=== 对话历史 ===\n"
+            for msg in conversation_history[-10:]:  # 只保留最近10条消息
+                history += f"{msg}\n"
+            history += "=== 当前问题 ===\n"
+        
+        history += f"Question: {query}\n"
         for _ in range(max_steps):
             # 获取 LLM 响应
             response = await self.provider.complete(history, temperature=0.0)
@@ -477,7 +537,8 @@ class GeneralAgent:
                     import json
                     
                     action_match = re.search(r"Action:\s*(.*?)\n", response)
-                    input_match = re.search(r"Action Input:\s*(.*)", response, re.DOTALL)
+                    # 更精确地提取 Action Input - 只取到下一行的 Observation 或换行
+                    input_match = re.search(r"Action Input:\s*(.+?)(?:\nObservation|\nThought|\nAction|\n\n|$)", response, re.DOTALL)
                     
                     if not action_match or not input_match:
                         raise ValueError("Could not parse Action or Action Input")
@@ -490,20 +551,28 @@ class GeneralAgent:
                         action_input_str = re.sub(r"^```(?:json)?\s*", "", action_input_str)
                         action_input_str = re.sub(r"\s*```$", "", action_input_str)
                     
+                    # 尝试提取第一个有效的 JSON 对象
+                    json_match = re.search(r'\{[^{}]*\}', action_input_str)
+                    if json_match:
+                        action_input_str = json_match.group(0)
+                    
                     # 如果需要，启发式处理单引号或其他常见 JSON 错误
                     # 目前假设是有效的 JSON 或简单的字典字符串
                     try:
                         action_input = json.loads(action_input_str)
                     except json.JSONDecodeError:
                         # 如果工具期望特定键，则回退到简单字符串输入
-                        # 这是一个简化处理；更健壮的解析器会更好
-                        action_input = {"input": action_input_str}
+                        # 对于 web_search，尝试提取 query
+                        if action_name == "web_search":
+                            action_input = {"query": action_input_str}
+                        else:
+                            action_input = {"input": action_input_str}
 
-                    # 执行工具
+                    # 执行工具（异步）
                     observation = f"Observation: Error: Tool '{action_name}' not found."
                     if action_name in tool_runtime._tools:
                         try:
-                            result = tool_runtime.execute(ToolRequest(name=action_name, input=action_input))
+                            result = await tool_runtime.execute(ToolRequest(name=action_name, input=action_input))
                             observation = f"Observation: {result.output}"
                         except GuardrailTriggered:
                             # 向上冒泡，以便编排器可以优雅地暂停

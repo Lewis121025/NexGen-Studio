@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python lib 目录（但不包括 frontend/src/lib）
+/lib/
 lib64/
 parts/
 sdist/

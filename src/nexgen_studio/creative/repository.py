@@ -6,7 +6,7 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Iterable
+from typing import Iterable, Optional
 
 from sqlalchemy import select
 
@@ -225,4 +225,63 @@ def _build_default_repository() -> BaseCreativeProjectRepository:
     return InMemoryCreativeProjectRepository()
 
 
-creative_repository: BaseCreativeProjectRepository = _build_default_repository()
+class LazyCreativeProjectRepository(BaseCreativeProjectRepository):
+    """
+    懒加载代理 Repository，在首次使用时才初始化实际的 Repository。
+    
+    这解决了多 worker 模式下数据库初始化时机的问题。
+    """
+    
+    def __init__(self) -> None:
+        self._delegate: Optional[BaseCreativeProjectRepository] = None
+        self._init_lock = Lock()
+    
+    def _get_delegate(self) -> BaseCreativeProjectRepository:
+        """获取实际的 repository 实现，懒加载并线程安全。"""
+        if self._delegate is not None:
+            return self._delegate
+        
+        with self._init_lock:
+            # Double-check locking
+            if self._delegate is not None:
+                return self._delegate
+            
+            # 检查数据库是否已初始化
+            if settings.database_url and db_manager.engine is not None:
+                try:
+                    self._delegate = DatabaseCreativeProjectRepository()
+                    logger.info("Creative repository initialized with database backend")
+                except Exception as exc:
+                    logger.warning(f"Failed to initialize database repository, falling back to in-memory: {exc}")
+                    self._delegate = InMemoryCreativeProjectRepository()
+            else:
+                self._delegate = InMemoryCreativeProjectRepository()
+                if settings.database_url:
+                    logger.warning("Database URL configured but engine not ready, using in-memory repository")
+            
+            return self._delegate
+    
+    def set_delegate(self, delegate: BaseCreativeProjectRepository) -> None:
+        """
+        显式设置底层 repository 实现。
+        """
+        with self._init_lock:
+            old_type = type(self._delegate).__name__ if self._delegate else "None"
+            self._delegate = delegate
+            logger.info(f"Creative repository switched from {old_type} to {type(delegate).__name__}")
+    
+    async def create(self, payload: CreativeProjectCreateRequest) -> CreativeProject:
+        return await self._get_delegate().create(payload)
+    
+    async def get(self, project_id: str) -> CreativeProject:
+        return await self._get_delegate().get(project_id)
+    
+    async def upsert(self, project: CreativeProject) -> CreativeProject:
+        return await self._get_delegate().upsert(project)
+    
+    async def list_for_tenant(self, tenant_id: str) -> Iterable[CreativeProject]:
+        return await self._get_delegate().list_for_tenant(tenant_id)
+
+
+# 使用懒加载代理作为全局 repository
+creative_repository: LazyCreativeProjectRepository = LazyCreativeProjectRepository()

@@ -117,6 +117,18 @@ class Settings(BaseSettings):
         default="runway",
         alias="VIDEO_PROVIDER",
     )
+    
+    # 视频一致性设置
+    video_sequential_mode: bool = Field(
+        default=True,
+        alias="VIDEO_SEQUENTIAL_MODE",
+        description="启用顺序生成模式以获得更好的视频片段连贯性（但生成速度较慢）"
+    )
+    video_consistency_enhanced: bool = Field(
+        default=True,
+        alias="VIDEO_CONSISTENCY_ENHANCED",
+        description="启用一致性增强提示词"
+    )
 
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
     tavily_api_key: str | None = Field(default=None, alias="TAVILY_API_KEY")

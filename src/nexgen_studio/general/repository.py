@@ -6,6 +6,7 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from threading import Lock
+from typing import Optional
 
 from sqlalchemy import select
 
@@ -157,4 +158,68 @@ def _build_default_repository() -> BaseGeneralSessionRepository:
     return InMemoryGeneralSessionRepository()
 
 
-general_repository: BaseGeneralSessionRepository = _build_default_repository()
+class LazyGeneralSessionRepository(BaseGeneralSessionRepository):
+    """
+    懒加载代理 Repository，在首次使用时才初始化实际的 Repository。
+    
+    这解决了多 worker 模式下数据库初始化时机的问题：
+    - 模块加载时不立即创建数据库连接
+    - 首次调用时检查数据库状态并选择正确的实现
+    - 线程安全的单例初始化
+    """
+    
+    def __init__(self) -> None:
+        self._delegate: Optional[BaseGeneralSessionRepository] = None
+        self._init_lock = Lock()
+    
+    def _get_delegate(self) -> BaseGeneralSessionRepository:
+        """获取实际的 repository 实现，懒加载并线程安全。"""
+        if self._delegate is not None:
+            return self._delegate
+        
+        with self._init_lock:
+            # Double-check locking
+            if self._delegate is not None:
+                return self._delegate
+            
+            # 检查数据库是否已初始化
+            if settings.database_url and db_manager.engine is not None:
+                try:
+                    self._delegate = DatabaseGeneralSessionRepository()
+                    logger.info("General repository initialized with database backend")
+                except Exception as exc:
+                    logger.warning(f"Failed to initialize database repository, falling back to in-memory: {exc}")
+                    self._delegate = InMemoryGeneralSessionRepository()
+            else:
+                self._delegate = InMemoryGeneralSessionRepository()
+                if settings.database_url:
+                    logger.warning("Database URL configured but engine not ready, using in-memory repository")
+            
+            return self._delegate
+    
+    def set_delegate(self, delegate: BaseGeneralSessionRepository) -> None:
+        """
+        显式设置底层 repository 实现。
+        
+        用于应用启动时在数据库初始化后切换到数据库实现。
+        """
+        with self._init_lock:
+            old_type = type(self._delegate).__name__ if self._delegate else "None"
+            self._delegate = delegate
+            logger.info(f"General repository switched from {old_type} to {type(delegate).__name__}")
+    
+    async def create(self, payload: GeneralSessionCreateRequest) -> GeneralSession:
+        return await self._get_delegate().create(payload)
+    
+    async def upsert(self, session: GeneralSession) -> GeneralSession:
+        return await self._get_delegate().upsert(session)
+    
+    async def get(self, session_id: str) -> GeneralSession:
+        return await self._get_delegate().get(session_id)
+    
+    async def list_for_tenant(self, tenant_id: str, limit: int = 50) -> list[GeneralSession]:
+        return await self._get_delegate().list_for_tenant(tenant_id, limit)
+
+
+# 使用懒加载代理作为全局 repository
+general_repository: LazyGeneralSessionRepository = LazyGeneralSessionRepository()

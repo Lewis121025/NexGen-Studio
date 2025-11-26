@@ -355,6 +355,7 @@ class VectorDBManager:
     def __init__(self):
         self.provider: VectorDBProvider | None = None
         self._initialized = False
+        self._collections_created = False
     
     def initialize(self):
         """Initialize vector DB based on settings."""
@@ -376,7 +377,15 @@ class VectorDBManager:
             logger.info("Using in-memory vector database")
         
         self._initialized = True
-    
+
+    async def _ensure_collections(self):
+        """Ensure required collections exist."""
+        if self._collections_created or not self.provider:
+            return
+        # 1536 is OpenAI embedding dimension, adjust if using different model
+        await self.provider.create_collection("ConversationMemory", dimension=1536)
+        self._collections_created = True
+
     async def store_conversation_memory(
         self,
         session_id: str,
@@ -388,6 +397,8 @@ class VectorDBManager:
         """Store conversation memory with TTL."""
         if not self.provider:
             self.initialize()
+        
+        await self._ensure_collections()
         
         vec = EmbeddingVector(
             id=hashlib.sha256(f"{session_id}:{text}".encode()).hexdigest(),
@@ -409,6 +420,8 @@ class VectorDBManager:
         """Search for relevant conversation memories."""
         if not self.provider:
             self.initialize()
+        
+        await self._ensure_collections()
         
         filters = {"user_id": user_id} if user_id else None
         results = await self.provider.search(

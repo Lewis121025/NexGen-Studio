@@ -26,19 +26,35 @@ async def lifespan(app: FastAPI):
         try:
             await init_database()
             logger.info("数据库初始化成功")
-            # 将创意存储库重新绑定到基于数据库的实现
+            
+            # 将创意存储库切换到数据库后端（使用懒加载代理）
             from .creative import repository as creative_repo_module
-            creative_repo_module.creative_repository = creative_repo_module.DatabaseCreativeProjectRepository()
-            from .creative import workflow as creative_workflow_module
-            creative_workflow_module.creative_orchestrator = creative_workflow_module.CreativeOrchestrator(
-                repository=creative_repo_module.creative_repository
+            from .creative.repository import DatabaseCreativeProjectRepository
+            creative_repo_module.creative_repository.set_delegate(
+                DatabaseCreativeProjectRepository()
             )
+            # 更新 workflow 中的 orchestrator
+            from .creative import workflow as creative_workflow_module
+            creative_workflow_module.creative_orchestrator.repository = creative_repo_module.creative_repository
+            # 更新 router 中的引用
             from .routers import creative as creative_router_module
             creative_router_module.creative_repository = creative_repo_module.creative_repository
             creative_router_module.creative_orchestrator = creative_workflow_module.creative_orchestrator
             logger.info("创意存储库已切换到数据库后端")
+            
+            # 将通用会话存储库切换到数据库后端（使用懒加载代理）
+            from .general import repository as general_repo_module
+            from .general.repository import DatabaseGeneralSessionRepository
+            general_repo_module.general_repository.set_delegate(
+                DatabaseGeneralSessionRepository()
+            )
+            # 更新 orchestrator 的 repository 引用
+            from .general import session as general_session_module
+            general_session_module.general_orchestrator.repository = general_repo_module.general_repository
+            logger.info("通用会话存储库已切换到数据库后端")
+            
         except Exception as e:
-            logger.error(f"数据库初始化失败: {e}")
+            logger.error(f"数据库初始化失败: {e}", exc_info=True)
     
     # 初始化 Redis 缓存
     if settings.redis_enabled:

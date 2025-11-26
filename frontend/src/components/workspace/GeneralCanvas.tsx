@@ -23,8 +23,11 @@ import {
   X,
   FileText,
   Image as ImageIcon,
+  Square,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function uuid() {
   return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -218,6 +221,21 @@ export default function GeneralCanvas() {
     }
   };
 
+  const handleAbort = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+      setStreaming(false);
+      setStatusText('');
+      if (currentSession) {
+        addMessage(currentSession.id, {
+          role: 'assistant',
+          content: '⚠️ 回答已被用户中断',
+        });
+      }
+    }
+  };
+
   const toggleToolExpansion = (toolId: string) => {
     setExpandedTools((prev) => {
       const next = new Set(prev);
@@ -372,18 +390,25 @@ export default function GeneralCanvas() {
               <Paperclip className="w-4 h-4 text-muted-foreground" />
             </Button>
 
-            <Button
-              size="icon"
-              onClick={handleSend}
-              disabled={(!input.trim() && attachedFiles.length === 0) || isStreaming}
-              className="absolute right-2 bottom-2 rounded-full bg-primary hover:bg-primary/90"
-            >
-              {isStreaming ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
+            {isStreaming ? (
+              <Button
+                size="icon"
+                onClick={handleAbort}
+                className="absolute right-2 bottom-2 rounded-full bg-destructive hover:bg-destructive/90"
+                title="停止生成"
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                onClick={handleSend}
+                disabled={!input.trim() && attachedFiles.length === 0}
+                className="absolute right-2 bottom-2 rounded-full bg-primary hover:bg-primary/90"
+              >
                 <Send className="w-4 h-4" />
-              )}
-            </Button>
+              </Button>
+            )}
           </div>
 
           <div className="mt-2 text-xs text-muted-foreground text-center">
@@ -424,9 +449,15 @@ function MessageBubble({ message }: { message: any }) {
             : 'bg-surface-2 text-foreground'
         )}
       >
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          {message.content}
-        </div>
+        {isUser ? (
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        ) : (
+          <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-headings:my-3 prose-code:bg-surface-3 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-surface-3 prose-pre:p-3">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );

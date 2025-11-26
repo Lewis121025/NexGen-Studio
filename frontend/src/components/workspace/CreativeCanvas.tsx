@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useStudioStore } from '@/lib/stores/studio';
@@ -21,6 +21,8 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  RefreshCw,
+  Play,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -59,16 +61,26 @@ export default function CreativeCanvas() {
   const [error, setError] = useState<string>('');
   const queryClient = useQueryClient();
   
-  // 当 savedProjectId 变化时同步（如切换 session 或 URL 参数变化）
+  // 当会话切换时重置状态
   useEffect(() => {
-    if (savedProjectId && savedProjectId !== projectId) {
-      setProjectId(savedProjectId);
+    // 获取新会话的 backendId
+    const newProjectId = currentSession?.backendId || urlProjectId || null;
+    
+    // 如果是新会话（没有 backendId），重置到草稿阶段
+    if (!newProjectId) {
+      setProjectId(null);
+      setStage('drafting');
+      setPrompt('');
+      setError('');
+    } else if (newProjectId !== projectId) {
+      // 切换到已有项目
+      setProjectId(newProjectId);
       // 如果是从 URL 加载的，同步到 session
       if (urlProjectId && currentSessionId && !currentSession?.backendId) {
         setSessionBackendId(currentSessionId, urlProjectId);
       }
     }
-  }, [savedProjectId, urlProjectId, currentSessionId, currentSession?.backendId]);
+  }, [currentSessionId, currentSession?.backendId, urlProjectId]);
 
   const projectQuery = useQuery({
     queryKey: ['creativeProject', projectId],
@@ -101,6 +113,14 @@ export default function CreativeCanvas() {
       return;
     }
     
+    // 预览就绪或预览待处理 - 显示完成页面
+    if (state === 'preview_ready' || state === 'preview_pending' ||
+        state === 'validation_pending' || state === 'distribution_pending') {
+      setStage('done');
+      setCreativeStage('done');
+      return;
+    }
+    
     // 视频渲染中或渲染完成
     if (state === 'rendering' || state === 'render_pending' || 
         (project.shots && project.shots.length > 0)) {
@@ -110,15 +130,15 @@ export default function CreativeCanvas() {
     }
     
     // 分镜已生成（storyboard_ready）- 显示分镜预览
-    if (state === 'storyboard_ready' || 
+    if (state === 'storyboard_ready' || state === 'storyboard_pending' ||
         (project.storyboard && project.storyboard.length > 0)) {
       setStage('visualizing');
       setCreativeStage('visualizing');
       return;
     }
     
-    // 脚本已生成 - 等待批准脚本
-    if (state === 'script_ready' || project.script) {
+    // 脚本已生成 - 等待批准脚本 (后端状态为 script_review 或 script_ready)
+    if (state === 'script_ready' || state === 'script_review' || project.script) {
       setStage('scripting');
       setCreativeStage('scripting');
       return;
@@ -177,6 +197,28 @@ export default function CreativeCanvas() {
     }
   };
 
+  const handleRegenerateStoryboard = async () => {
+    if (!projectId) return;
+    setError('');
+    try {
+      const res = await fetch(`/api/creative/projects/${projectId}/regenerate-storyboard`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(120000), // 2分钟超时
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || '重新生成分镜失败');
+      }
+      queryClient.invalidateQueries({ queryKey: ['creativeProject', projectId] });
+    } catch (e: any) {
+      if (e.name === 'TimeoutError') {
+        setError('请求超时，请稍后刷新页面查看结果');
+      } else {
+        setError(e?.message || '操作失败');
+      }
+    }
+  };
+
   const shots = useMemo(() => project?.shots || [], [project]);
 
   return (
@@ -203,7 +245,11 @@ export default function CreativeCanvas() {
               <ScriptingStage project={project} onAdvance={handleAdvance} />
             )}
             {stage === 'visualizing' && (
-              <VisualizingStage project={project} onAdvance={handleAdvance} />
+              <VisualizingStage 
+                project={project} 
+                onAdvance={handleAdvance} 
+                onRegenerate={handleRegenerateStoryboard}
+              />
             )}
             {stage === 'rendering' && (
               <RenderingStage project={project} onAdvance={handleAdvance} />
@@ -399,13 +445,16 @@ function ScriptingStage({
 function VisualizingStage({
   project,
   onAdvance,
+  onRegenerate,
 }: {
   project?: CreativeProject;
   onAdvance: () => void;
+  onRegenerate: () => void;
 }) {
   const panels = project?.storyboard || [];
   const [imageErrors, setImageErrors] = useState<Set<number>>(new Set());
   const [isAdvancing, setIsAdvancing] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   const handleAdvance = async () => {
     setIsAdvancing(true);
@@ -413,6 +462,16 @@ function VisualizingStage({
       await onAdvance();
     } finally {
       setIsAdvancing(false);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    setIsRegenerating(true);
+    setImageErrors(new Set()); // 清除图片错误状态
+    try {
+      await onRegenerate();
+    } finally {
+      setIsRegenerating(false);
     }
   };
 
@@ -434,18 +493,33 @@ function VisualizingStage({
             已生成 {panels.length} 个场景，查看视觉效果后可开始渲染
           </p>
         </div>
-        <Button 
-          onClick={handleAdvance} 
-          disabled={panels.length === 0 || isAdvancing}
-          className="bg-primary hover:bg-primary/90 rounded-google"
-        >
-          {isAdvancing ? (
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <Video className="w-4 h-4 mr-2" />
-          )}
-          {isAdvancing ? '提交中...' : '开始渲染视频'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            onClick={handleRegenerate} 
+            disabled={panels.length === 0 || isRegenerating || isAdvancing}
+            variant="outline"
+            className="rounded-google"
+          >
+            {isRegenerating ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            {isRegenerating ? '重新生成中...' : '不满意？重新生成'}
+          </Button>
+          <Button 
+            onClick={handleAdvance} 
+            disabled={panels.length === 0 || isAdvancing || isRegenerating}
+            className="bg-primary hover:bg-primary/90 rounded-google"
+          >
+            {isAdvancing ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Video className="w-4 h-4 mr-2" />
+            )}
+            {isAdvancing ? '提交中...' : '开始渲染视频'}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -549,24 +623,71 @@ function RenderingStage({
 
 // ==================== 阶段 5: 完成 ====================
 function DoneStage({ shots }: { shots: any[] }) {
-  const firstVideo = shots.find((s) => s.video_url)?.video_url;
+  // 获取所有有效的视频片段
+  const validVideos = shots.filter((s) => s.video_url).map((s) => s.video_url);
+  const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   const [videoError, setVideoError] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  
+  // 当前播放的视频URL
+  const currentVideo = validVideos[currentVideoIndex];
+  
+  // 计算总时长（假设每个片段5秒）
+  const totalDuration = validVideos.length * 5;
 
-  const handleDownload = async () => {
-    if (!firstVideo) return;
+  // 视频播放结束时自动切换到下一个
+  const handleVideoEnded = () => {
+    if (currentVideoIndex < validVideos.length - 1) {
+      setCurrentVideoIndex(prev => prev + 1);
+      // 自动播放下一个
+      setTimeout(() => {
+        videoRef.current?.play();
+      }, 100);
+    } else {
+      // 所有片段播放完毕
+      setIsPlaying(false);
+    }
+  };
+
+  // 播放全部
+  const handlePlayAll = () => {
+    setCurrentVideoIndex(0);
+    setIsPlaying(true);
+    setTimeout(() => {
+      videoRef.current?.play();
+    }, 100);
+  };
+
+  // 选择特定片段播放
+  const handleSelectClip = (index: number) => {
+    setCurrentVideoIndex(index);
+    setVideoError(false);
+    setTimeout(() => {
+      videoRef.current?.play();
+    }, 100);
+  };
+
+  const handleDownload = async (url: string, filename: string) => {
     try {
-      const response = await fetch(firstVideo);
+      const response = await fetch(url);
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `video-${Date.now()}.mp4`;
+      a.href = downloadUrl;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(downloadUrl);
     } catch (e) {
       alert('下载失败，视频链接可能已过期');
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    for (let i = 0; i < validVideos.length; i++) {
+      await handleDownload(validVideos[i], `video-clip-${i + 1}-${Date.now()}.mp4`);
     }
   };
 
@@ -582,18 +703,31 @@ function DoneStage({ shots }: { shots: any[] }) {
           <CheckCircle2 className="w-8 h-8 text-primary" />
         </div>
         <h2 className="text-2xl font-bold text-foreground">视频生成完成！</h2>
-        <p className="text-sm text-muted-foreground">你的视频已经准备好，点击播放预览。</p>
+        <p className="text-sm text-muted-foreground">
+          共生成 {validVideos.length} 个片段，总时长约 {totalDuration} 秒
+        </p>
       </div>
 
       <div className="bg-surface-2 rounded-google-lg p-6 space-y-4">
-        <div className="aspect-video bg-surface-3 rounded-google overflow-hidden">
-          {firstVideo && !videoError ? (
-            <video 
-              src={firstVideo} 
-              controls 
-              className="w-full h-full object-cover"
-              onError={() => setVideoError(true)}
-            />
+        {/* 主播放器 */}
+        <div className="aspect-video bg-surface-3 rounded-google overflow-hidden relative">
+          {currentVideo && !videoError ? (
+            <>
+              <video 
+                ref={videoRef}
+                src={currentVideo} 
+                controls 
+                className="w-full h-full object-cover"
+                onError={() => setVideoError(true)}
+                onEnded={handleVideoEnded}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+              />
+              {/* 当前片段指示器 */}
+              <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
+                片段 {currentVideoIndex + 1} / {validVideos.length}
+              </div>
+            </>
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center">
               <Video className="w-10 h-10 text-muted-foreground mb-2" />
@@ -604,28 +738,78 @@ function DoneStage({ shots }: { shots: any[] }) {
           )}
         </div>
 
+        {/* 播放控制按钮 */}
         <div className="flex items-center justify-center gap-3">
-          {firstVideo && !videoError && (
+          {validVideos.length > 1 && (
             <Button 
-              onClick={handleDownload}
+              onClick={handlePlayAll}
+              variant="default" 
+              className="rounded-google"
+            >
+              <Play className="w-4 h-4 mr-2" />
+              从头播放全部
+            </Button>
+          )}
+          {currentVideo && !videoError && (
+            <Button 
+              onClick={handleDownloadAll}
               variant="outline" 
               className="rounded-google"
             >
               <Download className="w-4 h-4 mr-2" />
-              下载视频
+              下载全部片段
             </Button>
           )}
         </div>
 
-        {/* 显示所有视频片段 */}
-        {shots.length > 1 && (
+        {/* 进度指示器 - 显示所有片段 */}
+        {validVideos.length > 1 && (
+          <div className="flex gap-1 justify-center">
+            {validVideos.map((_, idx) => (
+              <div 
+                key={idx}
+                className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                  idx === currentVideoIndex 
+                    ? 'w-8 bg-primary' 
+                    : idx < currentVideoIndex
+                    ? 'w-4 bg-primary/50'
+                    : 'w-4 bg-muted'
+                }`}
+                onClick={() => handleSelectClip(idx)}
+                title={`播放片段 ${idx + 1}`}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* 所有视频片段缩略图 */}
+        {validVideos.length > 1 && (
           <div className="pt-4 border-t border-border/30">
-            <h3 className="text-sm font-medium text-foreground mb-3">全部片段 ({shots.length})</h3>
+            <h3 className="text-sm font-medium text-foreground mb-3">点击片段跳转播放</h3>
             <div className="grid grid-cols-3 gap-2">
               {shots.map((shot, idx) => (
-                <div key={idx} className="aspect-video bg-surface-3 rounded overflow-hidden">
+                <div 
+                  key={idx} 
+                  className={`aspect-video bg-surface-3 rounded overflow-hidden cursor-pointer relative group transition-all ${
+                    idx === currentVideoIndex ? 'ring-2 ring-primary' : 'hover:ring-1 hover:ring-primary/50'
+                  }`}
+                  onClick={() => shot.video_url && handleSelectClip(validVideos.indexOf(shot.video_url))}
+                >
                   {shot.video_url ? (
-                    <video src={shot.video_url} className="w-full h-full object-cover" />
+                    <>
+                      <video 
+                        src={shot.video_url} 
+                        className="w-full h-full object-cover" 
+                        muted
+                        preload="metadata"
+                      />
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Play className="w-6 h-6 text-white" />
+                      </div>
+                      <div className="absolute bottom-1 left-1 bg-black/60 text-white text-xs px-1 rounded">
+                        {idx + 1}
+                      </div>
+                    </>
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <span className="text-xs text-muted-foreground">片段 {idx + 1}</span>
@@ -636,6 +820,15 @@ function DoneStage({ shots }: { shots: any[] }) {
             </div>
           </div>
         )}
+
+        {/* 提示信息 */}
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-google p-3">
+          <p className="text-xs text-yellow-700 dark:text-yellow-300">
+            <strong>提示：</strong>由于视频生成 API 限制，每个片段时长为 5 秒。
+            目前片段是独立的，自动连续播放模式已启用。
+            如需合并为单一视频，请下载后使用视频编辑软件合并。
+          </p>
+        </div>
       </div>
     </motion.div>
   );

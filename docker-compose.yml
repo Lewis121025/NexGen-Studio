@@ -44,6 +44,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - BACKEND_URL=http://lewis-api:8000
     container_name: lewis-frontend
     ports:
       - "3000:3000"
@@ -117,7 +119,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: lewis-worker
-    command: arq lewis_ai_system.task_queue.WorkerSettings
+    command: arq nexgen_studio.task_queue.WorkerSettings
     env_file:
       - .env
     environment:
@@ -137,6 +139,8 @@ services:
       - lewis-network
     volumes:
       - ./artifacts:/app/artifacts
+    healthcheck:
+      disable: true
 
 volumes:
   postgres-data:

@@ -57,8 +57,8 @@ class Tool:
     description: str  # 工具描述
     cost_estimate: float = 0.001  # 预估成本（美元）
 
-    def run(self, payload: dict[str, Any]) -> ToolResult:  # pragma: no cover - interface
-        """执行工具。
+    async def run(self, payload: dict[str, Any]) -> ToolResult:  # pragma: no cover - interface
+        """执行工具（异步方法）。
         
         Args:
             payload: 工具输入参数字典
@@ -110,7 +110,7 @@ class PythonSandboxTool(Tool):
             self._sandbox = EnhancedSandbox(api_key=settings.e2b_api_key)
         return self._sandbox
 
-    def run(self, payload: dict[str, Any]) -> ToolResult:
+    async def run(self, payload: dict[str, Any]) -> ToolResult:
         code = payload.get("code")
         if not isinstance(code, str):
             raise ToolExecutionError("python_sandbox requires 'code' string input")
@@ -160,20 +160,13 @@ class WebSearchTool(Tool):
             "required": ["query"]
         }
 
-    def run(self, payload: dict[str, Any]) -> ToolResult:
-        import asyncio
+    async def run(self, payload: dict[str, Any]) -> ToolResult:
         query = payload.get("query", "")
         provider_override = payload.get("provider")
         if provider_override:
             self.provider = self._provider_factory(provider_override)
         
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        result = loop.run_until_complete(self.provider.search(query))
+        result = await self.provider.search(query)
         return ToolResult(output={"query": query, "result": result}, cost_usd=0.01)
 
 
@@ -209,8 +202,7 @@ class WebScrapeTool(Tool):
             "required": ["url"]
         }
         
-    def run(self, payload: dict[str, Any]) -> ToolResult:
-        import asyncio
+    async def run(self, payload: dict[str, Any]) -> ToolResult:
         url = payload.get("url")
         if not url:
             raise ToolExecutionError("web_scrape requires 'url' string input")
@@ -219,13 +211,7 @@ class WebScrapeTool(Tool):
         if provider_override:
             self.provider = self._provider_factory(provider_override)
             
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        content = loop.run_until_complete(self.provider.scrape(url))
+        content = await self.provider.scrape(url)
         return ToolResult(output={"url": url, "content": content[:5000]}, cost_usd=0.005)
 
 
@@ -267,8 +253,7 @@ class VideoGenerationTool(Tool):
             "required": ["prompt"]
         }
 
-    def run(self, payload: dict[str, Any]) -> ToolResult:
-        import asyncio
+    async def run(self, payload: dict[str, Any]) -> ToolResult:
         from .task_queue import task_queue
 
         prompt = payload.get("prompt")
@@ -279,25 +264,15 @@ class VideoGenerationTool(Tool):
         aspect_ratio = payload.get("aspect_ratio", "16:9")
         quality = payload.get("quality", "preview")
 
-        async def _enqueue() -> str:
-            await task_queue.connect()
-            job_id = await task_queue.enqueue_generic_video(
-                {
-                    "prompt": prompt,
-                    "duration_seconds": duration,
-                    "aspect_ratio": aspect_ratio,
-                    "quality": quality,
-                }
-            )
-            return job_id
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        task_id = loop.run_until_complete(_enqueue())
+        await task_queue.connect()
+        task_id = await task_queue.enqueue_generic_video(
+            {
+                "prompt": prompt,
+                "duration_seconds": duration,
+                "aspect_ratio": aspect_ratio,
+                "quality": quality,
+            }
+        )
         return ToolResult(output={"task_id": task_id, "status": "pending"})
 
 
@@ -331,23 +306,14 @@ class TTSTool(Tool):
             "required": ["text"]
         }
 
-    def run(self, payload: dict[str, Any]) -> ToolResult:
-        import asyncio
-        
+    async def run(self, payload: dict[str, Any]) -> ToolResult:
         text = payload.get("text")
         if not isinstance(text, str):
             raise ToolExecutionError("text_to_speech requires 'text' string input")
         
         voice = payload.get("voice", "default")
         
-        # Run async provider call
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        result = loop.run_until_complete(self.provider.synthesize(text, voice=voice))
+        result = await self.provider.synthesize(text, voice=voice)
         
         # Calculate cost based on character count
         cost = (len(text) / 1000) * self.cost_estimate
@@ -370,13 +336,14 @@ class ToolRuntime:
         with self._lock:
             self._tools[tool.name] = tool
 
-    def execute(self, request: ToolRequest) -> ToolResult:
+    async def execute(self, request: ToolRequest) -> ToolResult:
+        """异步执行工具。"""
         tool = self._tools.get(request.name)
         if not tool:
             raise ToolExecutionError(f"Unknown tool '{request.name}'")
 
         emit_event(TelemetryEvent(name="tool_start", attributes={"tool": request.name}))
-        result = tool.run(request.input)
+        result = await tool.run(request.input)
         emit_event(TelemetryEvent(name="tool_complete", attributes={"tool": request.name, "cost": result.cost_usd}))
         return result
 

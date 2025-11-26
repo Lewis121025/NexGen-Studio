@@ -5,8 +5,9 @@
 
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useStudioStore, selectSessionsByMode } from '@/lib/stores/studio';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
@@ -19,9 +20,21 @@ import {
   Clock,
   Trash2,
   Star,
+  Loader2,
+  CloudOff,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+
+// 后端项目类型
+interface BackendProject {
+  id: string;
+  title: string;
+  brief: string;
+  state: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export default function StudioSidebar() {
   const mode = useStudioStore((state) => state.mode);
@@ -31,8 +44,21 @@ export default function StudioSidebar() {
   const deleteSession = useStudioStore((state) => state.deleteSession);
   const sessions = useStudioStore((state) => state.sessions);
   const assets = useStudioStore((state) => state.assets);
+  const setSessionBackendId = useStudioStore((state) => state.setSessionBackendId);
 
   const [activeTab, setActiveTab] = useState<'sessions' | 'assets'>('sessions');
+
+  // 从后端加载创意项目历史
+  const backendProjectsQuery = useQuery({
+    queryKey: ['creativeProjects'],
+    enabled: mode === 'creative',
+    queryFn: async () => {
+      const res = await fetch('/api/creative/projects');
+      if (!res.ok) throw new Error('获取项目列表失败');
+      const data = await res.json();
+      return (data.projects || []) as BackendProject[];
+    },
+  });
 
   // 使用 useMemo 缓存筛选结果,避免无限渲染
   const filteredSessions = useMemo(() => {
@@ -46,6 +72,23 @@ export default function StudioSidebar() {
     const session = createSession(mode);
     // 自动切换到新会话
     switchSession(session.id);
+  };
+
+  // 处理从后端项目恢复会话
+  const handleLoadBackendProject = (project: BackendProject) => {
+    // 检查是否已有该项目的本地会话
+    const existingSession = filteredSessions.find(
+      s => s.backendId === project.id
+    );
+    
+    if (existingSession) {
+      switchSession(existingSession.id);
+    } else {
+      // 创建新会话并关联后端项目
+      const session = createSession('creative', project.title);
+      setSessionBackendId(session.id, project.id);
+      switchSession(session.id);
+    }
   };
 
   return (
@@ -100,12 +143,25 @@ export default function StudioSidebar() {
       {/* 内容区域 */}
       <div className="flex-1 overflow-y-auto px-2 scrollbar-thin scrollbar-thumb-surface-3 scrollbar-track-transparent">
         {activeTab === 'sessions' ? (
-          <SessionList
-            sessions={filteredSessions}
-            currentSessionId={currentSessionId}
-            onSelect={switchSession}
-            onDelete={deleteSession}
-          />
+          mode === 'creative' ? (
+            <CreativeProjectList 
+              localSessions={filteredSessions}
+              backendProjects={backendProjectsQuery.data || []}
+              isLoading={backendProjectsQuery.isLoading}
+              isError={backendProjectsQuery.isError}
+              currentSessionId={currentSessionId}
+              onSelectLocal={switchSession}
+              onSelectBackend={handleLoadBackendProject}
+              onDelete={deleteSession}
+            />
+          ) : (
+            <SessionList
+              sessions={filteredSessions}
+              currentSessionId={currentSessionId}
+              onSelect={switchSession}
+              onDelete={deleteSession}
+            />
+          )
         ) : (
           <AssetLibrary assets={safeAssets} />
         )}
@@ -120,6 +176,180 @@ export default function StudioSidebar() {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ==================== 创意项目列表（合并本地+后端） ====================
+interface CreativeProjectListProps {
+  localSessions: any[];
+  backendProjects: BackendProject[];
+  isLoading: boolean;
+  isError: boolean;
+  currentSessionId: string | null;
+  onSelectLocal: (id: string) => void;
+  onSelectBackend: (project: BackendProject) => void;
+  onDelete: (id: string) => void;
+}
+
+function CreativeProjectList({
+  localSessions,
+  backendProjects,
+  isLoading,
+  isError,
+  currentSessionId,
+  onSelectLocal,
+  onSelectBackend,
+  onDelete,
+}: CreativeProjectListProps) {
+  // 获取已关联后端项目的本地会话 ID 集合
+  const linkedBackendIds = new Set(
+    localSessions.filter(s => s.backendId).map(s => s.backendId)
+  );
+  
+  // 过滤出未关联的后端项目
+  const unlinkedBackendProjects = backendProjects.filter(
+    p => !linkedBackendIds.has(p.id)
+  );
+  
+  // 状态映射显示
+  const stateLabels: Record<string, string> = {
+    brief_pending: '📝 草稿',
+    script_pending: '✍️ 生成脚本中',
+    script_review: '📖 脚本审核',
+    storyboard_pending: '🎨 生成分镜中',
+    storyboard_ready: '🎬 分镜就绪',
+    render_pending: '🎥 渲染中',
+    preview_pending: '👁️ 预览生成中',
+    preview_ready: '✅ 预览就绪',
+    completed: '🎉 已完成',
+    failed: '❌ 失败',
+    paused: '⏸️ 已暂停',
+  };
+  
+  const hasContent = localSessions.length > 0 || unlinkedBackendProjects.length > 0;
+  
+  return (
+    <div className="space-y-1 py-2">
+      {/* 加载状态 */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="w-5 h-5 text-primary animate-spin mr-2" />
+          <span className="text-xs text-muted-foreground">加载项目历史...</span>
+        </div>
+      )}
+      
+      {/* 错误状态 */}
+      {isError && (
+        <div className="flex items-center justify-center py-4 text-yellow-600">
+          <CloudOff className="w-4 h-4 mr-2" />
+          <span className="text-xs">无法连接服务器</span>
+        </div>
+      )}
+      
+      {/* 空状态 */}
+      {!isLoading && !hasContent && (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <Video className="w-12 h-12 text-muted-foreground/30 mb-3" />
+          <p className="text-sm text-muted-foreground">暂无项目</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            点击上方按钮创建新项目
+          </p>
+        </div>
+      )}
+      
+      {/* 本地会话列表（当前进行中的项目） */}
+      {localSessions.length > 0 && (
+        <>
+          <div className="px-2 py-1">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              当前会话
+            </span>
+          </div>
+          {localSessions.map((session) => (
+            <div
+              key={session.id}
+              className={cn(
+                'group relative rounded-google p-3 cursor-pointer transition-all',
+                currentSessionId === session.id
+                  ? 'bg-primary-container/20 border border-primary/30'
+                  : 'hover:bg-surface-3/50'
+              )}
+              onClick={() => onSelectLocal(session.id)}
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className={cn(
+                    'w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0',
+                    currentSessionId === session.id
+                      ? 'bg-primary/20'
+                      : 'bg-surface-3'
+                  )}
+                >
+                  <Video className="w-4 h-4 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-medium text-foreground truncate">
+                    {session.title}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {session.stage ? stateLabels[session.stage] || session.stage : '草稿'}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity w-7 h-7"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(session.id);
+                  }}
+                >
+                  <Trash2 className="w-3 h-3 text-destructive" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+      
+      {/* 后端项目历史（已保存的项目） */}
+      {unlinkedBackendProjects.length > 0 && (
+        <>
+          <div className="px-2 py-1 mt-4">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              历史项目
+            </span>
+          </div>
+          {unlinkedBackendProjects.map((project) => (
+            <div
+              key={project.id}
+              className="group relative rounded-google p-3 cursor-pointer transition-all hover:bg-surface-3/50"
+              onClick={() => onSelectBackend(project)}
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-surface-3">
+                  <Video className="w-4 h-4 text-muted-foreground" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-medium text-foreground truncate">
+                    {project.title}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {stateLabels[project.state] || project.state}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                    {formatDistanceToNow(new Date(project.updated_at), {
+                      addSuffix: true,
+                      locale: zhCN,
+                    })}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }

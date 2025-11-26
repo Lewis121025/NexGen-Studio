@@ -69,6 +69,23 @@ async def approve_preview(project_id: str) -> CreativeProjectResponse:
     return CreativeProjectResponse(project=project)
 
 
+@router.post("/projects/{project_id}/regenerate-storyboard", response_model=CreativeProjectResponse)
+async def regenerate_storyboard(project_id: str) -> CreativeProjectResponse:
+    """重新生成分镜图片"""
+    try:
+        project = await creative_orchestrator.regenerate_storyboard(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        from ..instrumentation import get_logger
+        logger = get_logger()
+        logger.error(f"Error regenerating storyboard for project {project_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate storyboard: {str(exc)}") from exc
+    return CreativeProjectResponse(project=project)
+
+
 @router.get("/projects", response_model=CreativeProjectListResponse)
 async def list_projects(tenant_id: str = "demo") -> CreativeProjectListResponse:
     try:

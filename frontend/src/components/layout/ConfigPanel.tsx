@@ -119,7 +119,7 @@ function GeneralConfigPanel() {
       {/* 工具开关 */}
       <ConfigSection title="工具">
         <ConfigItem
-          label="Google Search"
+          label="Tavily Search"
           description="启用实时网络搜索"
         >
           <Switch
@@ -207,23 +207,26 @@ function CreativeConfigPanel() {
         <Separator className="bg-border/30" />
 
         {/* 视频时长 */}
-        <ConfigItem label="Duration" description="视频时长">
+        <ConfigItem label="Duration" description="总视频时长（每片段最长5秒）">
           <Select
             value={creativeConfig.videoDuration.toString()}
             onValueChange={(value) =>
-              updateCreativeConfig({ videoDuration: parseInt(value) as 3 | 5 | 10 | 15 })
+              updateCreativeConfig({ videoDuration: parseInt(value) as 5 | 10 | 15 | 30 })
             }
           >
             <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="rounded-google">
-              <SelectItem value="3">3 秒</SelectItem>
-              <SelectItem value="5">5 秒</SelectItem>
-              <SelectItem value="10">10 秒</SelectItem>
-              <SelectItem value="15">15 秒 (推荐)</SelectItem>
+              <SelectItem value="5">5 秒 (1 片段)</SelectItem>
+              <SelectItem value="10">10 秒 (2 片段)</SelectItem>
+              <SelectItem value="15">15 秒 (3 片段)</SelectItem>
+              <SelectItem value="30">30 秒 (6 片段)</SelectItem>
             </SelectContent>
           </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            视频 API 限制每片段最长 5 秒，系统会自动拆分
+          </p>
         </ConfigItem>
 
         <Separator className="bg-border/30" />
@@ -266,6 +269,30 @@ function CreativeConfigPanel() {
               <SelectItem value="high">高清 (慢)</SelectItem>
             </SelectContent>
           </Select>
+        </ConfigItem>
+
+        <Separator className="bg-border/30" />
+
+        {/* 一致性模式 */}
+        <ConfigItem label="Consistency" description="片段间视觉一致性">
+          <Select
+            value={creativeConfig.consistencyMode || 'enhanced'}
+            onValueChange={(value: 'basic' | 'enhanced' | 'sequential') =>
+              updateCreativeConfig({ consistencyMode: value })
+            }
+          >
+            <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="rounded-google">
+              <SelectItem value="basic">基础 (快速，一致性较低)</SelectItem>
+              <SelectItem value="enhanced">增强 (推荐，平衡速度与一致性)</SelectItem>
+              <SelectItem value="sequential">顺序 (最佳一致性，生成较慢)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            顺序模式会使用上一片段的最后一帧作为下一片段的起始参考
+          </p>
         </ConfigItem>
       </ConfigSection>
 

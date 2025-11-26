@@ -86,8 +86,17 @@ class GeneralModeOrchestrator:
             logger.error(f"Error getting session {session_id}: {e}", exc_info=True)
             raise ValueError(f"Failed to retrieve session: {str(e)}") from e
         
-        if session.state != GeneralSessionState.ACTIVE:
-            raise ValueError(f"Session is not active (current state: {session.state})")
+        # 允许已完成或已暂停的会话继续对话
+        if session.state == GeneralSessionState.COMPLETED:
+            session.state = GeneralSessionState.ACTIVE
+            session.iteration = 0  # 重置迭代计数
+            logger.info(f"Session {session_id} reactivated from COMPLETED state")
+        elif session.state == GeneralSessionState.PAUSED:
+            session.state = GeneralSessionState.ACTIVE
+            session.pause_reason = None
+            logger.info(f"Session {session_id} reactivated from PAUSED state")
+        elif session.state == GeneralSessionState.FAILED:
+            raise ValueError(f"Session has failed and cannot be continued")
 
         if not self._can_continue(session):
             return await self._persist_guardrail_pause(session)
@@ -101,9 +110,17 @@ class GeneralModeOrchestrator:
         # Wrap tool runtime to record steps
         recording_runtime = SessionRecordingToolRuntime(self.tool_runtime, session)
 
+        # 提取对话历史（排除当前消息）
+        conversation_history = session.messages[:-1] if len(session.messages) > 1 else []
+
         try:
-            # Delegate the entire loop to the GeneralAgent
-            final_answer = await agent_pool.general.react_loop(session.goal, recording_runtime, max_steps=remaining_steps)
+            # Delegate the entire loop to the GeneralAgent with conversation history
+            final_answer = await agent_pool.general.react_loop(
+                session.goal, 
+                recording_runtime, 
+                max_steps=remaining_steps,
+                conversation_history=conversation_history
+            )
             
             session.summary = final_answer
             session.messages.append(f"Final Answer: {final_answer}")
@@ -252,7 +269,7 @@ class SessionRecordingToolRuntime:
             self._session.messages.append(self._session.pause_reason)
             raise GuardrailTriggered("budget_exceeded", self._session.pause_reason)
 
-    def execute(self, request: ToolRequest) -> Any:
+    async def execute(self, request: ToolRequest) -> Any:
         self._ensure_budget_and_iterations()
 
         # Record start
@@ -264,7 +281,7 @@ class SessionRecordingToolRuntime:
         )
         
         try:
-            result = self._runtime.execute(request)
+            result = await self._runtime.execute(request)
             output = result.output
             cost = result.cost_usd
         except GuardrailTriggered:

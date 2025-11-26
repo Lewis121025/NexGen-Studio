@@ -15,9 +15,7 @@ import {
   PanelRightOpen,
   MessageSquare,
   Video,
-  Settings,
   Maximize2,
-  Menu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -123,21 +121,13 @@ export default function StudioHeader() {
           size="icon"
           onClick={toggleConfigPanel}
           className="text-muted-foreground hover:text-foreground"
+          title="配置面板"
         >
           {layout.configPanelOpen ? (
             <PanelRightClose className="w-5 h-5" />
           ) : (
             <PanelRightOpen className="w-5 h-5" />
           )}
-        </Button>
-
-        {/* 系统设置 */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Settings className="w-5 h-5" />
         </Button>
       </div>
     </header>

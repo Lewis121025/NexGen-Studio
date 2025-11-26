@@ -54,7 +54,7 @@ if [[ "${DATABASE_URL:-}" != "" ]]; then
 
   if [[ "${SKIP_ENTRYPOINT_DB_INIT:-0}" != "1" ]]; then
     echo "[$(timestamp)] Running database migrations..."
-    if ! python -m lewis_ai_system.cli init-db; then
+    if ! python -m nexgen_studio.cli init-db; then
       echo "[$(timestamp)] Database initialization failed" >&2
       exit 1
     fi
