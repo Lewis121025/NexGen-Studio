@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON, Enum as SQLEnum, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON, Boolean, ForeignKey
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
@@ -58,8 +58,8 @@ class CreativeProject(Base):
     auto_pause_enabled = Column(Boolean, default=True)
     
     # ========== 时间戳 ==========
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
-    last_active_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow(), nullable=False, index=True)
+    last_active_at = Column(DateTime, default=lambda: datetime.utcnow(), onupdate=lambda: datetime.utcnow(), nullable=False)
     
     # Relationships
     scripts = relationship("Script", back_populates="project", cascade="all, delete-orphan")
@@ -75,7 +75,7 @@ class Script(Base):
     content_text = Column(Text, nullable=False)
     version = Column(Integer, default=1)
     reviewed_by_user = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
     
     project = relationship("CreativeProject", back_populates="scripts")
 
@@ -90,7 +90,7 @@ class Storyboard(Base):
     camera_angle = Column(String(100))
     visual_prompt = Column(Text, nullable=False)
     version = Column(Integer, default=1)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
     
     project = relationship("CreativeProject", back_populates="storyboards")
     shots = relationship("GeneratedShot", back_populates="storyboard", cascade="all, delete-orphan")
@@ -107,7 +107,7 @@ class ProjectAsset(Base):
     reuse_key = Column(String(64), index=True)
     origin_project_id = Column(Integer)
     reuse_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
     
     project = relationship("CreativeProject", back_populates="assets")
 
@@ -125,7 +125,7 @@ class GeneratedShot(Base):
     quality_score = Column(Float, nullable=True)
     quality_tier = Column(String(20), default="preview")
     cost_usd = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
     
     storyboard = relationship("Storyboard", back_populates="shots")
 
@@ -146,8 +146,8 @@ class Conversation(Base):
     max_iterations = Column(Integer, default=10)
     cost_usd = Column(Float, default=0.0)
     budget_limit_usd = Column(Float, default=5.0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_active_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
+    last_active_at = Column(DateTime, default=lambda: datetime.utcnow(), onupdate=lambda: datetime.utcnow())
     timeout_at = Column(DateTime, nullable=True)
     config_json = Column(JSON)
     
@@ -162,7 +162,7 @@ class ConversationTurn(Base):
     role = Column(String(20), nullable=False)  # user, assistant
     content_text = Column(Text, nullable=False)
     turn_number = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
     
     conversation = relationship("Conversation", back_populates="turns")
 
@@ -185,7 +185,7 @@ class ToolExecution(Base):
     error_type = Column(String(50), nullable=True)
     duration_ms = Column(Integer)
     cost_usd = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow(), index=True)
 
 
 class CostBreakdown(Base):
@@ -199,7 +199,7 @@ class CostBreakdown(Base):
     units = Column(Float, default=0.0)
     cost_usd = Column(Float, nullable=False)
     stage = Column(String(50), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow(), index=True)
 
 
 class User(Base):
@@ -207,13 +207,16 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(String(100), unique=True, nullable=False, index=True)
+    external_id = Column(String(100), unique=True, nullable=False, index=True)  # JWT sub from Clerk/Auth0
+    user_id = Column(String(100), unique=True, nullable=False, index=True)  # Legacy compatibility
     email = Column(String(255), unique=True, nullable=True)
     api_key_hash = Column(String(128), nullable=True)  # bcrypt hash
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
     tier = Column(String(20), default="free")  # free, pro, enterprise
+    credits_usd = Column(Float, default=10.0)  # User credit balance
     budget_limit_usd = Column(Float, default=100.0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
     last_login_at = Column(DateTime, nullable=True)
 
 
@@ -233,8 +236,8 @@ class VectorEmbedding(Base):
     metadata_json = Column(JSON)
     topic_id = Column(Integer, ForeignKey("user_topics.id"), nullable=True)
     expires_at = Column(DateTime, nullable=True, index=True)
-    last_accessed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    last_accessed_at = Column(DateTime, default=lambda: datetime.utcnow())
+    created_at = Column(DateTime, default=lambda: datetime.utcnow(), index=True)
 
 
 class UserTopic(Base):
@@ -247,8 +250,8 @@ class UserTopic(Base):
     summary_text = Column(Text)
     expertise_level = Column(String(20), default="beginner")  # beginner, intermediate, expert
     session_count = Column(Integer, default=0)
-    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_updated = Column(DateTime, default=lambda: datetime.utcnow(), onupdate=lambda: datetime.utcnow())
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
 
 
 class ToolSchemaRegistry(Base):
@@ -260,8 +263,8 @@ class ToolSchemaRegistry(Base):
     schema_json = Column(JSON, nullable=False)
     version = Column(String(20), default="1.0.0")
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
+    updated_at = Column(DateTime, default=lambda: datetime.utcnow(), onupdate=lambda: datetime.utcnow())
 
 
 class CostAnomalyAlert(Base):
@@ -278,7 +281,7 @@ class CostAnomalyAlert(Base):
     budget_limit = Column(Float, nullable=False)
     message = Column(Text)
     acknowledged = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow(), index=True)
 
 
 class VectorIndexMaintenance(Base):
@@ -292,7 +295,7 @@ class VectorIndexMaintenance(Base):
     duration_seconds = Column(Float)
     status = Column(String(20), default="success")  # success, failed
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow(), index=True)
 
 
 # ============================================================================

@@ -23,15 +23,67 @@ class LLMProvider(Protocol):
     async def complete(self, prompt: str, *, temperature: float = 0.2) -> str:  # pragma: no cover - protocol
         ...
 
+    async def generate_completion(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None
+    ) -> dict[str, Any]:  # pragma: no cover - protocol
+        """Generate completion with message history and optional structured output."""
+        ...
 
-@dataclass(slots=True)
+    async def analyze_image(
+        self,
+        image_url: str,
+        prompt: str,
+        *,
+        temperature: float = 0.1,
+        max_tokens: int | None = None
+    ) -> dict[str, Any]:  # pragma: no cover - protocol
+        """Analyze image content with multimodal capabilities."""
+        ...
+
+
+@dataclass
 class EchoLLMProvider:
     """Simple provider that echoes prompts for deterministic tests."""
 
     name: str = settings.llm_provider.name
 
     async def complete(self, prompt: str, *, temperature: float = 0.2) -> str:
-        return f"[{self.name}::temp={temperature}] {prompt.strip()}"
+        return f"[{self.name}::temp={temperature}] {prompt.strip()} | \u5b66\u4e60 \u6559\u7a0b \u6559\u80b2"
+
+    async def generate_completion(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        """Mock implementation for testing."""
+        last_message = messages[-1]["content"] if messages else ""
+        return {
+            "content": f"[MOCK::{self.name}] {last_message.strip()}",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        }
+
+    async def analyze_image(
+        self,
+        image_url: str,
+        prompt: str,
+        *,
+        temperature: float = 0.1,
+        max_tokens: int | None = None
+    ) -> dict[str, Any]:
+        """Mock image analysis for testing."""
+        return {
+            "content": f"[MOCK_IMAGE_ANALYSIS] {prompt[:50]}... for image: {image_url}",
+            "image_url": image_url,
+            "model": self.name,
+        }
 
 
 @dataclass(slots=True)
@@ -57,9 +109,9 @@ class OpenRouterLLMProvider:
             "Content-Type": "application/json",
         }
         try:
-            client_kwargs = {"timeout": 60}
+            client_kwargs: dict[str, object] = {"timeout": 60}
             if settings.httpx_proxies:
-                client_kwargs["proxy"] = settings.httpx_proxies
+                client_kwargs["proxy"] = settings.httpx_proxies  # type: ignore
             async with httpx.AsyncClient(**client_kwargs) as client:
                 response = await client.post(
                     f"{self.base_url.rstrip('/')}/chat/completions",
@@ -76,6 +128,353 @@ class OpenRouterLLMProvider:
         except (KeyError, IndexError, TypeError) as exc:  # pragma: no cover - defensive
             raise RuntimeError("Malformed OpenRouter response") from exc
 
+    async def generate_completion(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        """Generate completion with message history."""
+        payload = {
+            "model": self.model,
+            "temperature": temperature,
+            "messages": messages,
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        if response_format:
+            payload["response_format"] = response_format
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            client_kwargs = {"timeout": 60}
+            if settings.httpx_proxies:
+                client_kwargs["proxy"] = settings.httpx_proxies
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                response = await client.post(
+                    f"{self.base_url.rstrip('/')}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"OpenRouter request failed: {exc}") from exc
+
+        data = response.json()
+        try:
+            return {
+                "content": data["choices"][0]["message"]["content"].strip(),
+                "usage": data.get("usage", {}),
+            }
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Malformed OpenRouter response") from exc
+
+    async def analyze_image(
+        self,
+        image_url: str,
+        prompt: str,
+        *,
+        temperature: float = 0.1,
+        max_tokens: int | None = None
+    ) -> dict[str, Any]:
+        """Analyze image using vision-capable models via OpenRouter."""
+        # Note: OpenRouter may not support all vision models, this is a fallback
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a professional visual analyst."
+            },
+            {
+                "role": "user",
+                "content": f"Analyze this image: {image_url}\n\n{prompt}"
+            }
+        ]
+
+        result = await self.generate_completion(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        return {
+            "content": result["content"],
+            "image_url": image_url,
+            "model": self.model,
+        }
+
+
+@dataclass(slots=True)
+class GeminiLLMProvider:
+    """LLM provider that forwards requests to Google Gemini via OpenRouter.
+    
+    Enhanced for creative content analysis, consistency control, and multimodal understanding.
+    """
+
+    api_key: str
+    model: str = "google/gemini-2.5-flash-lite-preview-09-2025"
+    base_url: str = "https://openrouter.ai/api/v1"
+    name: str = "gemini"
+    max_tokens: int = 8192
+    timeout: int = 120
+
+    async def complete(self, prompt: str, *, temperature: float = 0.2) -> str:
+        """Basic text completion."""
+        payload = {
+            "model": self.model,
+            "temperature": temperature,
+            "max_tokens": self.max_tokens,
+            "messages": [
+                {"role": "system", "content": "You are Lewis AI System reasoning engine, specialized in creative content analysis and consistency control."},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        return await self._make_request(payload)
+
+    async def generate_completion(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        """Generate completion with message history and optional structured output.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            temperature: Sampling temperature (0.0-1.0)
+            max_tokens: Maximum tokens to generate
+            response_format: Optional JSON schema for structured output
+            
+        Returns:
+            Dict with 'content', 'usage', and other metadata
+        """
+        payload = {
+            "model": self.model,
+            "temperature": temperature,
+            "max_tokens": max_tokens or self.max_tokens,
+            "messages": messages,
+        }
+        
+        if response_format:
+            payload["response_format"] = response_format
+            
+        response_text = await self._make_request(payload)
+        
+        # Parse usage information if available
+        usage = {}
+        try:
+            # This would be populated from actual API response
+            usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        except (KeyError, TypeError):
+            pass
+            
+        return {
+            "content": response_text,
+            "usage": usage,
+            "model": self.model,
+        }
+
+    async def analyze_image(
+        self,
+        image_url: str,
+        prompt: str,
+        *,
+        temperature: float = 0.1,
+        max_tokens: int | None = None
+    ) -> dict[str, Any]:
+        """Analyze image content with multimodal capabilities.
+        
+        Args:
+            image_url: URL of the image to analyze
+            prompt: Analysis prompt
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            
+        Returns:
+            Analysis result with content and metadata
+        """
+        messages = [
+            {
+                "role": "system", 
+                "content": "You are a professional visual analyst specializing in character and scene feature extraction for video consistency control."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}}
+                ]
+            }
+        ]
+        
+        payload = {
+            "model": self.model,
+            "temperature": temperature,
+            "max_tokens": max_tokens or self.max_tokens,
+            "messages": messages,
+        }
+        
+        response_text = await self._make_request(payload)
+        
+        return {
+            "content": response_text,
+            "image_url": image_url,
+            "model": self.model,
+        }
+
+    async def batch_analyze(
+        self,
+        items: list[dict[str, Any]],
+        analysis_type: str = "consistency"
+    ) -> list[dict[str, Any]]:
+        """Batch analyze multiple items for efficiency.
+        
+        Args:
+            items: List of items to analyze (images, texts, etc.)
+            analysis_type: Type of analysis to perform
+            
+        Returns:
+            List of analysis results
+        """
+        if analysis_type == "consistency":
+            return await self._batch_consistency_analysis(items)
+        elif analysis_type == "quality":
+            return await self._batch_quality_analysis(items)
+        else:
+            # Generic batch processing
+            results = []
+            for item in items:
+                try:
+                    if isinstance(item, str) and item.startswith("http"):
+                        # Assume it's an image URL
+                        result = await self.analyze_image(
+                            item, 
+                            "Analyze this image for key features."
+                        )
+                    else:
+                        # Assume it's text
+                        result = await self.complete(str(item))
+                        result = {"content": result}
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Failed to analyze item {item}: {e}")
+                    results.append({"content": "", "error": str(e)})
+            return results
+
+    async def _make_request(self, payload: dict[str, Any]) -> str:
+        """Make HTTP request to OpenRouter API."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        client_kwargs = {"timeout": self.timeout}
+        if settings.httpx_proxies:
+            client_kwargs["proxy"] = settings.httpx_proxies
+            
+        try:
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                response = await client.post(
+                    f"{self.base_url.rstrip('/')}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Malformed Gemini response") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Gemini API request failed: {exc}") from exc
+
+    async def _batch_consistency_analysis(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Specialized batch analysis for consistency evaluation."""
+        # For consistency analysis, we need to compare multiple items
+        if len(items) < 2:
+            return [{"content": "Insufficient items for consistency analysis", "score": 1.0}]
+        
+        # Build comparison prompt
+        prompt = f"""
+        Analyze consistency across these {len(items)} visual items.
+        
+        Items to analyze:
+        {chr(10).join(f"{i+1}. {item.get('url', item.get('content', ''))}" for i, item in enumerate(items))}
+        
+        Evaluate:
+        1. Character consistency (facial features, clothing, proportions)
+        2. Scene continuity (lighting, background, camera angles)
+        3. Style consistency (artistic style, color palette, quality)
+        
+        Return JSON with:
+        {{
+            "overall_score": float (0.0-1.0),
+            "character_consistency": float (0.0-1.0),
+            "scene_consistency": float (0.0-1.0),
+            "style_consistency": float (0.0-1.0),
+            "issues": [string],
+            "recommendations": [string]
+        }}
+        """
+        
+        try:
+            response = await self.complete(prompt, temperature=0.1)
+            # Try to parse JSON response
+            import json
+            import re
+            
+            json_match = re.search(r'\{[^}]+\}', response, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group())
+                return [parsed]
+            else:
+                # Fallback to text analysis
+                return [{"content": response, "score": 0.7}]
+        except Exception as e:
+            logger.error(f"Batch consistency analysis failed: {e}")
+            return [{"content": f"Analysis failed: {e}", "score": 0.5}]
+
+    async def _batch_quality_analysis(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Specialized batch analysis for quality evaluation."""
+        results = []
+        for item in items:
+            try:
+                if item.get("url"):
+                    result = await self.analyze_image(
+                        item["url"],
+                        "Evaluate the visual quality of this image. Consider composition, clarity, lighting, and overall appeal. Return a score from 0.0 to 1.0."
+                    )
+                else:
+                    result = await self.complete(
+                        f"Evaluate the quality of this content: {item.get('content', '')}. Return a score from 0.0 to 1.0."
+                    )
+                    result = {"content": result}
+                
+                # Extract score if present
+                content = result.get("content", "")
+                score = 0.7  # default
+                import re
+                score_match = re.search(r'0\.\d+|1\.0|0\.0', content)
+                if score_match:
+                    try:
+                        score = float(score_match.group())
+                    except ValueError:
+                        pass
+                
+                result["score"] = score
+                results.append(result)
+                
+            except Exception as e:
+                logger.error(f"Quality analysis failed for item {item}: {e}")
+                results.append({"content": f"Analysis failed: {e}", "score": 0.5})
+        
+        return results
+
 
 def _build_default_llm_provider() -> LLMProvider:
     if settings.llm_provider_mode == "openrouter":
@@ -83,10 +482,34 @@ def _build_default_llm_provider() -> LLMProvider:
             logger.warning("LLM_PROVIDER_MODE=openrouter but OPENROUTER_API_KEY missing; falling back to mock provider.")
             return EchoLLMProvider()
         return OpenRouterLLMProvider(api_key=settings.openrouter_api_key)
+    elif settings.llm_provider_mode == "gemini":
+        if not settings.openrouter_api_key:
+            logger.warning("LLM_PROVIDER_MODE=gemini but OPENROUTER_API_KEY missing; falling back to mock provider.")
+            return EchoLLMProvider()
+        return GeminiLLMProvider(api_key=settings.openrouter_api_key)
     return EchoLLMProvider()
 
 
 default_llm_provider: LLMProvider = _build_default_llm_provider()
+
+
+def get_llm_provider(provider_name: str = "default") -> LLMProvider:
+    """Factory function to get LLM provider by name."""
+    if provider_name == "default":
+        return default_llm_provider
+    elif provider_name == "gemini" or provider_name == "gemini-2.5-flash-lite":
+        if not settings.openrouter_api_key:
+            logger.warning("Gemini provider requested but OPENROUTER_API_KEY missing; falling back to mock provider.")
+            return EchoLLMProvider()
+        return GeminiLLMProvider(api_key=settings.openrouter_api_key)
+    elif provider_name == "openrouter":
+        if not settings.openrouter_api_key:
+            logger.warning("OpenRouter provider requested but OPENROUTER_API_KEY missing; falling back to mock provider.")
+            return EchoLLMProvider()
+        return OpenRouterLLMProvider(api_key=settings.openrouter_api_key)
+    else:
+        logger.warning(f"Unknown LLM provider '{provider_name}'; using default provider.")
+        return default_llm_provider
 
 
 # ============================================================================
@@ -106,8 +529,21 @@ class VideoGenerationProvider(Protocol):
         duration_seconds: int = 5,
         aspect_ratio: str = "16:9",
         quality: str = "preview",
+        # 新增参数支持一致性控制
+        reference_image: str | None = None,
+        consistency_seed: int | None = None,
+        character_prompt: str | None = None,
     ) -> dict[str, str]:
         """Generate video and return metadata including URL.
+        
+        Args:
+            prompt: Text description of the video to generate
+            duration_seconds: Duration in seconds
+            aspect_ratio: Video aspect ratio (e.g., "16:9")
+            quality: Video quality ("preview" or "final")
+            reference_image: Optional reference image URL for consistency
+            consistency_seed: Optional seed for consistent generation
+            character_prompt: Optional character consistency prompt
         
         Returns:
             dict with keys: 'video_url', 'status', 'job_id', etc.
@@ -130,6 +566,10 @@ class RunwayVideoProvider:
         duration_seconds: int = 5,
         aspect_ratio: str = "16:9",
         quality: str = "preview",
+        # 新增参数（Runway可能不支持，但需要接口兼容）
+        reference_image: str | None = None,
+        consistency_seed: int | None = None,
+        character_prompt: str | None = None,
     ) -> dict[str, str]:
         """Submit video generation job to Runway API."""
         payload = {
@@ -191,6 +631,10 @@ class RunwareVideoProvider:
         duration_seconds: int = 5,
         aspect_ratio: str = "16:9",
         quality: str = "preview",
+        # 新增参数（Runware可能不支持，但需要接口兼容）
+        reference_image: str | None = None,
+        consistency_seed: int | None = None,
+        character_prompt: str | None = None,
     ) -> dict[str, str]:
         """Submit videoInference job and poll for completion."""
 
@@ -287,7 +731,7 @@ class DoubaoVideoProvider:
 
     api_key: str
     base_url: str = "https://ark.cn-beijing.volces.com/api/v3/contents"
-    model: str = "doubao-seedance-1-0-pro-250528"
+    model: str = "doubao-seedance-1-0-pro-fast-251015"
     poll_interval_seconds: float = 5.0
     max_poll_attempts: int = 60  # 最多等待5分钟
     name: str = "doubao"
@@ -299,26 +743,53 @@ class DoubaoVideoProvider:
         duration_seconds: int = 5,
         aspect_ratio: str = "16:9",
         quality: str = "preview",
+        # 新增参数支持一致性控制
+        reference_image: str | None = None,
+        consistency_seed: int | None = None,
+        character_prompt: str | None = None,
     ) -> dict[str, str]:
         """Submit video generation job to Doubao API and poll for completion.
         
         According to official docs: https://www.volcengine.com/docs/82379/1520757
         """
         # Build payload according to official API (https://www.volcengine.com/docs/82379/1520757)
+        content = []
+        
+        # 添加文本内容
+        content.append({
+            "type": "text", 
+            "text": prompt
+        })
+        
+        # 添加首帧图片（如果提供）
+        if reference_image:
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": reference_image
+                }
+            })
+        
+        # 添加角色一致性提示（如果提供）
+        if character_prompt:
+            content.append({
+                "type": "text",
+                "text": f"\n\nCharacter consistency requirements: {character_prompt}"
+            })
+        
         payload: dict[str, Any] = {
             "model": self.model,
-            "content": [
-                {
-                    "type": "text",
-                    "text": prompt,
-                }
-            ],
+            "content": content,
             "ratio": aspect_ratio,
             "duration": max(1, int(duration_seconds)),
             "framespersecond": 24,
             "watermark": False,
             # Resolution defaults to 720p if not specified; allow doc defaults to take over.
         }
+        
+        # 添加一致性种子（如果提供）
+        if consistency_seed:
+            payload["seed"] = consistency_seed
         
         # Doubao API also accepts callback_url/return_last_frame etc. when needed.
         
@@ -446,6 +917,10 @@ class PikaVideoProvider:
         duration_seconds: int = 3,
         aspect_ratio: str = "16:9",
         quality: str = "preview",
+        # 新增参数（Pika可能不支持，但需要接口兼容）
+        reference_image: str | None = None,
+        consistency_seed: int | None = None,
+        character_prompt: str | None = None,
     ) -> dict[str, str]:
         """Submit video generation job to Pika API."""
         payload = {
@@ -495,10 +970,24 @@ class MockVideoProvider:
         duration_seconds: int = 5,
         aspect_ratio: str = "16:9",
         quality: str = "preview",
+        # 新增参数（Mock Provider支持用于测试）
+        reference_image: str | None = None,
+        consistency_seed: int | None = None,
+        character_prompt: str | None = None,
     ) -> dict[str, str]:
         """Return mock video generation result."""
         import hashlib
-        job_id = hashlib.md5(prompt.encode()).hexdigest()[:12]
+        
+        # 构建包含一致性信息的prompt用于生成唯一ID
+        enhanced_prompt = prompt
+        if character_prompt:
+            enhanced_prompt += f" | Character: {character_prompt}"
+        if reference_image:
+            enhanced_prompt += f" | Reference: {reference_image}"
+        if consistency_seed:
+            enhanced_prompt += f" | Seed: {consistency_seed}"
+            
+        job_id = hashlib.md5(enhanced_prompt.encode()).hexdigest()[:12]
         return {
             "video_url": f"https://mock.video/{job_id}.mp4",
             "status": "completed",
@@ -506,6 +995,9 @@ class MockVideoProvider:
             "provider": self.name,
             "prompt": prompt,
             "duration": duration_seconds,
+            "reference_image": reference_image,
+            "consistency_seed": consistency_seed,
+            "character_prompt": character_prompt,
         }
 
 

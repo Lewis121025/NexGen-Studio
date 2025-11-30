@@ -6,12 +6,11 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from .config import settings
 from .instrumentation import get_logger
-from .redis_cache import cache_manager
 
 logger = get_logger()
 

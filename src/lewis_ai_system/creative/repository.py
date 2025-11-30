@@ -56,6 +56,10 @@ class InMemoryCreativeProjectRepository(BaseCreativeProjectRepository):
             style=payload.style,
             budget_limit_usd=payload.budget_limit_usd,
             auto_pause_enabled=payload.auto_pause_enabled,
+            consistency_level=payload.consistency_level,
+            character_reference=payload.character_reference,
+            scene_reference=payload.scene_reference,
+            video_provider=payload.video_provider,
         )
         return await self.upsert(project)
 
@@ -72,6 +76,13 @@ class InMemoryCreativeProjectRepository(BaseCreativeProjectRepository):
 
     async def list_for_tenant(self, tenant_id: str) -> Iterable[CreativeProject]:
         return [p for p in self._items.values() if p.tenant_id == tenant_id]
+
+    async def list(self, tenant_id: str = "demo", limit: int | None = None) -> Iterable[CreativeProject]:
+        """List projects for a tenant with optional limit (test helper)."""
+        projects = await self.list_for_tenant(tenant_id)
+        if limit is not None:
+            return list(projects)[:limit]
+        return projects
 
 
 class DatabaseCreativeProjectRepository(BaseCreativeProjectRepository):
@@ -145,15 +156,15 @@ class DatabaseCreativeProjectRepository(BaseCreativeProjectRepository):
         return CreativeProject(
             id=record.external_id,
             tenant_id=record.user_id,
-            title=record.title,
-            brief=record.brief,
+            title=record.title or "Untitled",
+            brief=record.brief or "",
             summary=record.summary,
-            duration_seconds=record.duration_seconds,
-            aspect_ratio=record.aspect_ratio,
-            video_provider=record.video_provider,
-            style=record.style,
-            budget_limit_usd=record.budget_usd,
-            cost_usd=record.cost_usd,
+            duration_seconds=record.duration_seconds or 30,
+            aspect_ratio=record.aspect_ratio or "16:9",
+            video_provider=record.video_provider or "doubao",
+            style=record.style or "cinematic",
+            budget_limit_usd=record.budget_usd or 50.0,
+            cost_usd=record.cost_usd or 0.0,
             state=state,
             pre_pause_state=pre_pause_state,
             script=record.script_text,
@@ -165,7 +176,7 @@ class DatabaseCreativeProjectRepository(BaseCreativeProjectRepository):
             distribution_log=record.distribution_json or [],
             pause_reason=record.pause_reason,
             paused_at=record.paused_at,
-            auto_pause_enabled=record.auto_pause_enabled,
+            auto_pause_enabled=record.auto_pause_enabled if record.auto_pause_enabled is not None else True,
             created_at=record.created_at or datetime.now(timezone.utc),
             updated_at=record.last_active_at or datetime.now(timezone.utc),
             error_message=record.error_message,
@@ -179,7 +190,7 @@ class DatabaseCreativeProjectRepository(BaseCreativeProjectRepository):
         record.aspect_ratio = project.aspect_ratio
         record.style = project.style
         record.video_provider = project.video_provider
-        record.script_text = project.script or project.script_text if hasattr(project, "script_text") else project.script
+        record.script_text = project.script
         record.storyboard_json = [panel.model_dump(mode="json") for panel in project.storyboard]
         record.shots_json = [shot.model_dump(mode="json") for shot in project.shots]
         record.render_manifest_json = project.render_manifest.model_dump(mode="json") if project.render_manifest else None

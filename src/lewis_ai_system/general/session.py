@@ -15,10 +15,10 @@ from ..instrumentation import TelemetryEvent, emit_event
 from ..tooling import ToolRequest, ToolRuntime, default_tool_runtime
 from ..vector_db import vector_db
 from .models import GuardrailTriggered, GeneralSession, GeneralSessionCreateRequest, GeneralSessionState, ToolCallRecord
+from .repository import BaseGeneralSessionRepository, general_repository
 
 # Maintain compatibility with older imports that expected SessionState here.
 SessionState = GeneralSessionState
-from .repository import BaseGeneralSessionRepository, general_repository
 
 
 class GeneralModeOrchestrator:
@@ -64,9 +64,11 @@ class GeneralModeOrchestrator:
     async def run_iteration(self, session_id: str, prompt_text: str | None = None) -> GeneralSession:
         """运行一次迭代，执行 ReAct 循环。
         
+        支持连续对话：每次迭代完成后保持 ACTIVE 状态，允许用户继续提问。
+        
         Args:
             session_id: 会话 ID
-            prompt_text: 可选的提示文本，如果提供则更新会话目标
+            prompt_text: 可选的提示文本，如果提供则作为新的用户消息
             
         Returns:
             更新后的会话对象
@@ -86,15 +88,21 @@ class GeneralModeOrchestrator:
             logger.error(f"Error getting session {session_id}: {e}", exc_info=True)
             raise ValueError(f"Failed to retrieve session: {str(e)}") from e
         
+        # 允许从 COMPLETED 状态继续对话（多轮对话支持）
+        if session.state == GeneralSessionState.COMPLETED:
+            session.mark_state(GeneralSessionState.ACTIVE)
+        
         if session.state != GeneralSessionState.ACTIVE:
             raise ValueError(f"Session is not active (current state: {session.state})")
 
         if not self._can_continue(session):
             return await self._persist_guardrail_pause(session)
 
+        # 处理新的用户输入
         if prompt_text:
-            session.goal = prompt_text
             session.messages.append(f"User: {prompt_text}")
+            # 更新目标为最新的用户问题，但保留历史上下文
+            session.goal = prompt_text
 
         remaining_steps = max(session.max_iterations - session.iteration, 1)
 
@@ -102,12 +110,16 @@ class GeneralModeOrchestrator:
         recording_runtime = SessionRecordingToolRuntime(self.tool_runtime, session)
 
         try:
+            # 构建包含历史上下文的查询
+            context_query = self._build_context_query(session)
+            
             # Delegate the entire loop to the GeneralAgent
-            final_answer = await agent_pool.general.react_loop(session.goal, recording_runtime, max_steps=remaining_steps)
+            final_answer = await agent_pool.general.react_loop(context_query, recording_runtime, max_steps=remaining_steps)
             
             session.summary = final_answer
-            session.messages.append(f"Final Answer: {final_answer}")
-            session.mark_state(GeneralSessionState.COMPLETED)
+            session.messages.append(f"Assistant: {final_answer}")
+            # 保持 ACTIVE 状态以支持连续对话
+            # 只有在达到预算或迭代限制时才会变成其他状态
             
         except GuardrailTriggered as exc:
             # Guardrail handlers already stamped the session; just persist
@@ -118,7 +130,8 @@ class GeneralModeOrchestrator:
         except Exception as e:
             logger.error(f"Error in react_loop for session {session_id}: {e}", exc_info=True)
             session.messages.append(f"Error: {str(e)}")
-            session.mark_state(GeneralSessionState.FAILED)
+            # 即使出错也保持 ACTIVE，允许用户重试
+            session.summary = f"处理出错: {str(e)}"
             emit_event(TelemetryEvent(name="general_session_error", attributes={"session_id": session.id, "error": str(e)}))
 
         try:
@@ -129,6 +142,32 @@ class GeneralModeOrchestrator:
             logger.error(f"Error persisting session {session_id}: {e}", exc_info=True)
             # Return session even if persistence fails, so user can see the result
             return session
+
+    def _build_context_query(self, session: GeneralSession) -> str:
+        """构建包含历史上下文的查询。
+        
+        保留最近的对话历史，让 AI 能理解上下文。
+        """
+        # 提取最近的对话历史（最多保留5轮）
+        recent_messages = []
+        for msg in session.messages[-10:]:  # 最多10条消息
+            if msg.startswith("User:") or msg.startswith("Assistant:"):
+                recent_messages.append(msg)
+        
+        if len(recent_messages) <= 1:
+            # 只有当前问题，直接使用
+            return session.goal
+        
+        # 构建带上下文的查询
+        context = "\n".join(recent_messages[:-1])  # 排除最后一条（当前问题）
+        current_question = session.goal
+        
+        return f"""Based on our conversation history:
+{context}
+
+Current question: {current_question}
+
+Please answer the current question considering the context above."""
 
     def _can_continue(self, session: GeneralSession) -> bool:
         """Early guard check before entering the loop."""
@@ -253,6 +292,7 @@ class SessionRecordingToolRuntime:
             raise GuardrailTriggered("budget_exceeded", self._session.pause_reason)
 
     def execute(self, request: ToolRequest) -> Any:
+        """同步执行工具（兼容旧代码）。"""
         self._ensure_budget_and_iterations()
 
         # Record start
@@ -274,6 +314,44 @@ class SessionRecordingToolRuntime:
             cost = 0.0
             emit_event(TelemetryEvent(name="general_tool_error", attributes={"session_id": self._session.id, "tool": request.name, "error": str(e)}))
 
+        self._record_tool_call(request, output, cost)
+        self._ensure_budget_and_iterations()
+        
+        return result
+
+    async def execute_async(self, request: ToolRequest) -> Any:
+        """异步执行工具（推荐在 FastAPI 等异步框架中使用）。"""
+        self._ensure_budget_and_iterations()
+
+        # Record start
+        emit_event(
+            TelemetryEvent(
+                name="general_iteration_start",
+                attributes={"session_id": self._session.id, "tool": request.name},
+            )
+        )
+        
+        try:
+            result = await self._runtime.execute_async(request)
+            output = result.output
+            cost = result.cost_usd
+        except GuardrailTriggered:
+            raise
+        except Exception as e:
+            output = {"error": str(e)}
+            cost = 0.0
+            emit_event(TelemetryEvent(name="general_tool_error", attributes={"session_id": self._session.id, "tool": request.name, "error": str(e)}))
+            # 返回一个包含错误的 ToolResult
+            from ..tooling import ToolResult
+            result = ToolResult(output=output, cost_usd=cost)
+
+        self._record_tool_call(request, output, cost)
+        self._ensure_budget_and_iterations()
+        
+        return result
+
+    def _record_tool_call(self, request: ToolRequest, output: Any, cost: float) -> None:
+        """记录工具调用到会话。"""
         # Update session
         self._session.spent_usd += cost
         self._session.iteration += 1
@@ -290,14 +368,6 @@ class SessionRecordingToolRuntime:
             )
         )
         self._session.messages.append(f"Tool: {request.name}\nOutput: {str(output)[:500]}...")
-
-        self._ensure_budget_and_iterations()
-        
-        # Check guardrails (simplified for synchronous execution context)
-        # Note: In a real async loop, we might want to stop the agent if guardrails hit.
-        # For now, we just record.
-        
-        return result
 
 
 general_orchestrator = GeneralModeOrchestrator()

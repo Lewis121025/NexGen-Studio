@@ -15,7 +15,7 @@ if [[ ! -f ".env" ]]; then
   fi
 fi
 
-python - <<'PY'
+python3 - <<'PY'
 import secrets
 from pathlib import Path
 path = Path(".env")
@@ -53,7 +53,7 @@ echo "[info] Booting postgres for migrations..."
 docker compose up -d postgres
 
 echo "[info] Running database migrations via CLI..."
-if ! docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python -m lewis_ai_system.cli init-db; then
+if ! docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python3 -m lewis_ai_system.cli init-db; then
   echo "[error] Database initialization failed. Check docker compose logs postgres/lewis-api." >&2
   exit 1
 fi

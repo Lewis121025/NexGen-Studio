@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import animatePlugin from "tailwindcss-animate";
 
 const config: Config = {
     darkMode: ["class"],
@@ -45,24 +46,24 @@ const config: Config = {
                 input: "hsl(var(--input))",
                 ring: "hsl(var(--ring))",
                 chart: {
-                    "1": "hsl(var(--chart-1))",
-                    "2": "hsl(var(--chart-2))",
-                    "3": "hsl(var(--chart-3))",
-                    "4": "hsl(var(--chart-4))",
-                    "5": "hsl(var(--chart-5))",
+                    1: "hsl(var(--chart-1))",
+                    2: "hsl(var(--chart-2))",
+                    3: "hsl(var(--chart-3))",
+                    4: "hsl(var(--chart-4))",
+                    5: "hsl(var(--chart-5))",
                 },
                 // Google AI Studio Surface System
                 surface: {
-                    "1": "hsl(var(--surface-1))",
-                    "2": "hsl(var(--surface-2))",
-                    "3": "hsl(var(--surface-3))",
+                    1: "hsl(var(--surface-1))",
+                    2: "hsl(var(--surface-2))",
+                    3: "hsl(var(--surface-3))",
                 },
             },
             borderRadius: {
                 lg: "var(--radius)",
                 md: "calc(var(--radius) - 2px)",
                 sm: "calc(var(--radius) - 4px)",
-                "google": "1rem",
+                google: "1rem",
                 "google-lg": "1.5rem",
                 "google-xl": "2rem",
             },
@@ -92,6 +93,6 @@ const config: Config = {
             },
         },
     },
-    plugins: [require("tailwindcss-animate")],
+    plugins: [animatePlugin],
 };
 export default config;

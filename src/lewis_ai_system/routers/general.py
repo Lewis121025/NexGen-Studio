@@ -3,27 +3,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, AsyncGenerator
+from typing import AsyncGenerator
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
+from ..general.session import general_orchestrator
 from ..general.models import GeneralSessionCreateRequest, GeneralSessionResponse, GeneralSessionListResponse
 from ..general.repository import general_repository
-from ..general.session import general_orchestrator
 from ..storage import default_storage
 
-
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB per file
-
-
-from pydantic import BaseModel
 
 
 class RunIterationRequest(BaseModel):
     prompt: str | None = None
 
-router = APIRouter(prefix="/general", tags=["general"])
+router = APIRouter()
 
 
 @router.post("/sessions", response_model=GeneralSessionResponse, status_code=201)
@@ -99,7 +96,12 @@ async def send_message_with_files(
     async def event_stream() -> AsyncGenerator[bytes, None]:
         def sse(data: dict[str, object]) -> bytes:
             import json as _json
-            return f"data: {_json.dumps(data)}\n\n".encode("utf-8")
+            from datetime import datetime
+            def json_serial(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                raise TypeError(f"Type {type(obj)} not serializable")
+            return f"data: {_json.dumps(data, default=json_serial)}\n\n".encode("utf-8")
 
         try:
             session = await general_repository.get(session_id)

@@ -1,29 +1,23 @@
 import pytest
 import asyncio
-from lewis_ai_system.config import settings
-from lewis_ai_system.providers import (
-    TavilySearchProvider,
-    FirecrawlScrapeProvider,
-    E2BSandboxProvider
-)
+import os
 
-# Helper to check if API key is present
+# Get API keys directly from environment (loaded by conftest.py)
 def has_api_key(key_name: str) -> bool:
-    # Map env var names to settings attributes
-    mapping = {
-        "TAVILY_API_KEY": "tavily_api_key",
-        "FIRECRAWL_API_KEY": "firecrawl_api_key",
-        "E2B_API_KEY": "e2b_api_key"
-    }
-    attr = mapping.get(key_name)
-    if not attr:
-        return False
-    return bool(getattr(settings, attr))
+    """Check if API key is present in environment."""
+    return bool(os.environ.get(key_name))
+
+# Lazy load settings to ensure .env is loaded first
+def get_settings():
+    from lewis_ai_system.config import Settings
+    return Settings()
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not has_api_key("TAVILY_API_KEY"), reason="TAVILY_API_KEY not set")
 async def test_tavily_search_real():
     """Test real Tavily search."""
+    from lewis_ai_system.providers import TavilySearchProvider
+    settings = get_settings()
     provider = TavilySearchProvider(api_key=settings.tavily_api_key)
     
     result = await provider.search("What is the latest version of Python?")
@@ -37,6 +31,8 @@ async def test_tavily_search_real():
 @pytest.mark.skipif(not has_api_key("FIRECRAWL_API_KEY"), reason="FIRECRAWL_API_KEY not set")
 async def test_firecrawl_scrape_real():
     """Test real Firecrawl scraping."""
+    from lewis_ai_system.providers import FirecrawlScrapeProvider
+    settings = get_settings()
     provider = FirecrawlScrapeProvider(api_key=settings.firecrawl_api_key)
     
     # Scrape a stable documentation page
@@ -51,6 +47,8 @@ async def test_firecrawl_scrape_real():
 @pytest.mark.skipif(not has_api_key("E2B_API_KEY"), reason="E2B_API_KEY not set")
 async def test_e2b_sandbox_real():
     """Test real E2B sandbox execution."""
+    from lewis_ai_system.providers import E2BSandboxProvider
+    settings = get_settings()
     provider = E2BSandboxProvider(api_key=settings.e2b_api_key)
     
     code = """

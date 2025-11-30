@@ -5,54 +5,46 @@
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import NextImage from 'next/image';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useStudioStore } from '@/lib/stores/studio';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
 import {
+  AlertCircle,
+  CheckCircle2,
+  Download,
+  Film,
+  Image as ImageIcon,
+  Loader2,
   Video,
   Wand2,
-  Film,
-  Image,
-  Download,
-  Loader2,
-  CheckCircle2,
-  AlertCircle,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import type { CreativeProject, GeneratedShot, StoryboardPanel } from '@/lib/api';
+import { useStudioStore } from '@/lib/stores/studio';
+import { cn } from '@/lib/utils';
 
 type Stage = 'drafting' | 'scripting' | 'visualizing' | 'rendering' | 'done';
 
-interface CreativeProject {
-  id: string;
-  title: string;
-  brief: string;
-  duration_seconds: number;
-  style: string;
-  state: string;
-  script?: string | null;
-  storyboard?: { scene_number: number; description: string; visual_reference_path?: string | null }[];
-  shots?: { scene_number: number; video_url?: string | null; status?: string }[];
-  render_manifest?: any;
-  preview_record?: any;
-}
-
-export default function CreativeCanvas() {
+export default function CreativeCanvas(): JSX.Element {
   const setCreativeStage = useStudioStore((state) => state.setCreativeStage);
   const [stage, setStage] = useState<Stage>('drafting');
   const [projectId, setProjectId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(false);
   const queryClient = useQueryClient();
 
-  const projectQuery = useQuery({
+  const projectQuery = useQuery<{ project: CreativeProject }>({
     queryKey: ['creativeProject', projectId],
-    enabled: !!projectId,
+    enabled: Boolean(projectId),
     refetchInterval: (data) => {
-      const state = (data?.project?.state as string) || '';
-      return state === 'completed' ? false : 2000;
+      const state = data?.project?.state ?? '';
+      // Stop polling when completed or in review states
+      if (state === 'completed') return false;
+      return 2000;
     },
     queryFn: async () => {
       const res = await fetch(`/api/creative/projects/${projectId}`);
@@ -63,27 +55,40 @@ export default function CreativeCanvas() {
 
   const project = projectQuery.data?.project;
 
-  // 根据后端状态推进阶段
+  // Map backend states to frontend stages
   useEffect(() => {
     if (!project) return;
-    if (project.state === 'completed') {
+    
+    const backendState = project.state;
+    
+    // Map backend states to UI stages
+    if (backendState === 'completed') {
       setStage('done');
       setCreativeStage('done');
-      return;
-    }
-    if (project.script) {
-      setStage('visualizing');
-      setCreativeStage('visualizing');
-    }
-    if (project.storyboard && project.storyboard.length > 0) {
+    } else if (backendState === 'render_pending' || backendState === 'preview_pending' || 
+               backendState === 'preview_ready' || backendState === 'validation_pending' ||
+               backendState === 'distribution_pending') {
       setStage('rendering');
       setCreativeStage('rendering');
+    } else if (backendState === 'storyboard_pending' || backendState === 'storyboard_ready') {
+      setStage('visualizing');
+      setCreativeStage('visualizing');
+    } else if (backendState === 'script_pending' || backendState === 'script_review') {
+      setStage('scripting');
+      setCreativeStage('scripting');
+    } else if (backendState === 'brief_pending') {
+      setStage('drafting');
+      setCreativeStage('drafting');
     }
+    
+    // Clear loading state when data arrives
+    setIsLoading(false);
   }, [project, setCreativeStage]);
 
-  const handleDraftGenerate = async () => {
+  const handleDraftGenerate = async (): Promise<void> => {
     if (!prompt.trim()) return;
     setError('');
+    setIsLoading(true);
     try {
       const res = await fetch('/api/creative/projects', {
         method: 'POST',
@@ -95,31 +100,65 @@ export default function CreativeCanvas() {
           style: 'cinematic',
         }),
       });
-      if (!res.ok) throw new Error('创建项目失败');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || '创建项目失败');
+      }
       const data = await res.json();
       setProjectId(data.project.id);
       setStage('scripting');
       setCreativeStage('scripting');
-      queryClient.invalidateQueries({ queryKey: ['creativeProject', data.project.id] });
-    } catch (e: any) {
-      setError(e?.message || '创建失败');
+      await queryClient.invalidateQueries({ queryKey: ['creativeProject', data.project.id] });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '创建失败';
+      setError(message);
+      setIsLoading(false);
     }
   };
 
-  const handleAdvance = async () => {
+  // Approve script and generate storyboard
+  const handleApproveScript = async (): Promise<void> => {
     if (!projectId) return;
     setError('');
-    const res = await fetch(`/api/creative/projects/${projectId}/advance`, {
-      method: 'POST',
-    });
-    if (!res.ok) {
-      setError('推进流程失败');
-    } else {
-      queryClient.invalidateQueries({ queryKey: ['creativeProject', projectId] });
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/creative/projects/${projectId}/approve-script`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || '生成分镜失败');
+      }
+      await queryClient.invalidateQueries({ queryKey: ['creativeProject', projectId] });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '生成分镜失败';
+      setError(message);
+      setIsLoading(false);
     }
   };
 
-  const shots = useMemo(() => project?.shots || [], [project]);
+  // Advance to next stage (for rendering etc.)
+  const handleAdvance = async (): Promise<void> => {
+    if (!projectId) return;
+    setError('');
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/creative/projects/${projectId}/advance`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || '推进流程失败');
+      }
+      await queryClient.invalidateQueries({ queryKey: ['creativeProject', projectId] });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '推进流程失败';
+      setError(message);
+      setIsLoading(false);
+    }
+  };
+
+  const shots = useMemo(() => project?.shots ?? [], [project]);
 
   return (
     <div className="h-full flex flex-col bg-surface-1">
@@ -139,16 +178,29 @@ export default function CreativeCanvas() {
                 prompt={prompt}
                 onPromptChange={setPrompt}
                 onGenerate={handleDraftGenerate}
+                isLoading={isLoading}
               />
             )}
             {stage === 'scripting' && (
-              <ScriptingStage project={project} onAdvance={handleAdvance} />
+              <ScriptingStage 
+                project={project} 
+                onApproveScript={handleApproveScript}
+                isLoading={isLoading}
+              />
             )}
             {stage === 'visualizing' && (
-              <VisualizingStage project={project} onAdvance={handleAdvance} />
+              <VisualizingStage 
+                project={project} 
+                onAdvance={handleAdvance}
+                isLoading={isLoading}
+              />
             )}
             {stage === 'rendering' && (
-              <RenderingStage project={project} onAdvance={handleAdvance} />
+              <RenderingStage 
+                project={project} 
+                onAdvance={handleAdvance}
+                isLoading={isLoading}
+              />
             )}
             {stage === 'done' && <DoneStage shots={shots} />}
           </AnimatePresence>
@@ -158,16 +210,16 @@ export default function CreativeCanvas() {
   );
 }
 
-// ==================== 阶段进度条 ====================
+// ==================== 阶段进度 ====================
 const STAGES = [
   { id: 'drafting', label: '概念撰写', icon: Wand2 },
   { id: 'scripting', label: '脚本生成', icon: Film },
-  { id: 'visualizing', label: '分镜生成', icon: Image },
+  { id: 'visualizing', label: '分镜生成', icon: ImageIcon },
   { id: 'rendering', label: '视频渲染', icon: Video },
   { id: 'done', label: '完成', icon: CheckCircle2 },
 ] as const;
 
-function StageProgress({ currentStage }: { currentStage: string }) {
+function StageProgress({ currentStage }: { currentStage: Stage }): JSX.Element {
   const currentIndex = STAGES.findIndex((s) => s.id === currentStage);
 
   return (
@@ -231,11 +283,13 @@ function DraftingStage({
   prompt,
   onPromptChange,
   onGenerate,
+  isLoading,
 }: {
   prompt: string;
   onPromptChange: (v: string) => void;
-  onGenerate: () => void;
-}) {
+  onGenerate: () => Promise<void>;
+  isLoading: boolean;
+}): JSX.Element {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -256,17 +310,29 @@ function DraftingStage({
           onChange={(e) => onPromptChange(e.target.value)}
           placeholder="示例：30 秒产品宣传片，展示 AI 助理提升办公效率，强调安全与隐私..."
           className="min-h-[200px] bg-surface-1 border-border/50 rounded-google"
+          disabled={isLoading}
         />
 
         <div className="flex items-center justify-between">
           <div className="text-xs text-muted-foreground">{prompt.length} / 2000 字符</div>
           <Button
-            onClick={onGenerate}
-            disabled={!prompt.trim()}
+            onClick={() => {
+              void onGenerate();
+            }}
+            disabled={!prompt.trim() || isLoading}
             className="bg-primary hover:bg-primary/90 rounded-google"
           >
-            <Wand2 className="w-4 h-4 mr-2" />
-            创建项目
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                创建中...
+              </>
+            ) : (
+              <>
+                <Wand2 className="w-4 h-4 mr-2" />
+                创建项目
+              </>
+            )}
           </Button>
         </div>
       </div>
@@ -277,11 +343,16 @@ function DraftingStage({
 // ==================== 阶段 2: 脚本生成 ====================
 function ScriptingStage({
   project,
-  onAdvance,
+  onApproveScript,
+  isLoading,
 }: {
   project?: CreativeProject;
-  onAdvance: () => void;
-}) {
+  onApproveScript: () => Promise<void>;
+  isLoading: boolean;
+}): JSX.Element {
+  const hasScript = Boolean(project?.script);
+  const canApprove = hasScript && project?.state === 'script_review';
+  
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -293,12 +364,27 @@ function ScriptingStage({
         <div>
           <h2 className="text-2xl font-bold text-foreground">分镜脚本</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            AI 正在生成脚本，完成后可继续生成分镜。
+            {hasScript ? '脚本已生成，确认后继续生成分镜。' : 'AI 正在生成脚本，请稍候...'}
           </p>
         </div>
-        <Button onClick={onAdvance} disabled={!project?.script} className="bg-primary hover:bg-primary/90 rounded-google">
-          <Image className="w-4 h-4 mr-2" />
-          生成分镜
+        <Button
+          onClick={() => {
+            void onApproveScript();
+          }}
+          disabled={!canApprove || isLoading}
+          className="bg-primary hover:bg-primary/90 rounded-google"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              生成中...
+            </>
+          ) : (
+            <>
+              <ImageIcon className="w-4 h-4 mr-2" />
+              确认并生成分镜
+            </>
+          )}
         </Button>
       </div>
 
@@ -320,11 +406,16 @@ function ScriptingStage({
 function VisualizingStage({
   project,
   onAdvance,
+  isLoading,
 }: {
   project?: CreativeProject;
-  onAdvance: () => void;
-}) {
-  const panels = project?.storyboard || [];
+  onAdvance: () => Promise<void>;
+  isLoading: boolean;
+}): JSX.Element {
+  const panels: StoryboardPanel[] = project?.storyboard ?? [];
+  const isGenerating = project?.state === 'storyboard_pending';
+  const canAdvance = panels.length > 0 && project?.state === 'storyboard_ready';
+  
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -335,17 +426,34 @@ function VisualizingStage({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-foreground">分镜预览</h2>
-          <p className="text-sm text-muted-foreground mt-1">查看每个场景的视觉效果</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {isGenerating ? '正在生成分镜，请稍候...' : '查看每个场景的视觉效果。'}
+          </p>
         </div>
-        <Button onClick={onAdvance} className="bg-primary hover:bg-primary/90 rounded-google">
-          <Video className="w-4 h-4 mr-2" />
-          开始渲染视频
+        <Button
+          onClick={() => {
+            void onAdvance();
+          }}
+          disabled={!canAdvance || isLoading}
+          className="bg-primary hover:bg-primary/90 rounded-google"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              处理中...
+            </>
+          ) : (
+            <>
+              <Video className="w-4 h-4 mr-2" />
+              开始渲染视频
+            </>
+          )}
         </Button>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         {panels.length === 0 && (
-          <div className="col-span-2 flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="col-span-2 flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
             <Loader2 className="w-4 h-4 animate-spin" />
             正在生成分镜...
           </div>
@@ -356,10 +464,12 @@ function VisualizingStage({
             className="group aspect-video bg-surface-3 rounded-google-lg overflow-hidden border border-border/30 relative"
           >
             {panel.visual_reference_path ? (
-              <img
+              <NextImage
                 src={panel.visual_reference_path}
                 alt={panel.description}
-                className="w-full h-full object-cover"
+                fill
+                className="object-cover"
+                sizes="(min-width: 1024px) 50vw, 100vw"
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center">
@@ -367,6 +477,11 @@ function VisualizingStage({
               </div>
             )}
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-white/70">场景 {panel.scene_number}</span>
+                <span className="text-xs text-white/50">·</span>
+                <span className="text-xs text-white/70">{panel.duration_seconds}秒</span>
+              </div>
               <p className="text-xs text-white line-clamp-2">{panel.description}</p>
             </div>
           </div>
@@ -380,13 +495,27 @@ function VisualizingStage({
 function RenderingStage({
   project,
   onAdvance,
+  isLoading,
 }: {
   project?: CreativeProject;
-  onAdvance: () => void;
-}) {
-  const state = project?.state || 'render_pending';
-  const shots = project?.shots || [];
+  onAdvance: () => Promise<void>;
+  isLoading: boolean;
+}): JSX.Element {
+  const state = project?.state ?? 'render_pending';
+  const shots: GeneratedShot[] = project?.shots ?? [];
   const completed = shots.filter((s) => s.status === 'completed').length;
+  const isCompleted = state === 'completed';
+  
+  // Calculate progress based on state
+  const getProgressPercentage = () => {
+    if (isCompleted) return 100;
+    if (shots.length > 0) return (completed / shots.length) * 100;
+    if (state === 'render_pending') return 20;
+    if (state === 'preview_pending') return 60;
+    if (state === 'preview_ready') return 80;
+    if (state === 'validation_pending') return 90;
+    return 40;
+  };
 
   return (
     <motion.div
@@ -399,13 +528,22 @@ function RenderingStage({
         <div>
           <h2 className="text-2xl font-bold text-foreground">视频渲染中</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {state === 'completed'
-              ? '渲染完成，进入预览'
-              : 'AI 正在合成视频，稍候自动更新状态'}
+            {isCompleted ? '渲染完成！' : 'AI 正在合成视频，稍候自动更新状态。'}
           </p>
         </div>
-        <Button onClick={onAdvance} className="bg-primary hover:bg-primary/90 rounded-google">
-          刷新进度
+        <Button
+          onClick={() => {
+            void onAdvance();
+          }}
+          disabled={isLoading}
+          variant="outline"
+          className="rounded-google"
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            '刷新进度'
+          )}
         </Button>
       </div>
 
@@ -414,21 +552,65 @@ function RenderingStage({
           <motion.div
             className="h-full bg-primary"
             initial={{ width: '0%' }}
-            animate={{ width: `${shots.length ? (completed / shots.length) * 100 : 40}%` }}
+            animate={{ width: `${getProgressPercentage()}%` }}
             transition={{ duration: 0.6, ease: 'easeInOut' }}
           />
         </div>
-        <p className="text-xs text-muted-foreground">
-          {shots.length ? `${completed}/${shots.length} 片段完成` : '准备渲染素材...'}
-        </p>
+        <div className="flex justify-between items-center">
+          <p className="text-xs text-muted-foreground">
+            {shots.length > 0 ? `${completed}/${shots.length} 片段完成` : '准备渲染素材...'}
+          </p>
+          <p className="text-xs text-muted-foreground capitalize">
+            状态: {state.replace(/_/g, ' ')}
+          </p>
+        </div>
       </div>
+      
+      {/* Show shot previews if available */}
+      {shots.length > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          {shots.slice(0, 6).map((shot) => (
+            <div key={shot.scene_number} className="aspect-video bg-surface-3 rounded-google overflow-hidden relative">
+              {shot.video_url ? (
+                <video src={shot.video_url} className="w-full h-full object-cover" muted />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  {shot.status === 'processing' ? (
+                    <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
+                  ) : shot.status === 'failed' ? (
+                    <AlertCircle className="w-5 h-5 text-red-500" />
+                  ) : (
+                    <Video className="w-5 h-5 text-muted-foreground" />
+                  )}
+                </div>
+              )}
+              <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
+                <span className="text-[10px] text-white">场景 {shot.scene_number}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </motion.div>
   );
 }
 
 // ==================== 阶段 5: 完成 ====================
-function DoneStage({ shots }: { shots: any[] }) {
+function DoneStage({ shots }: { shots: GeneratedShot[] }): JSX.Element {
   const firstVideo = shots.find((s) => s.video_url)?.video_url;
+  const [isPlaying, setIsPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const handlePlay = () => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.pause();
+      } else {
+        void videoRef.current.play();
+      }
+      setIsPlaying(!isPlaying);
+    }
+  };
 
   return (
     <motion.div
@@ -441,31 +623,81 @@ function DoneStage({ shots }: { shots: any[] }) {
         <div className="w-16 h-16 bg-primary/10 rounded-google-lg flex items-center justify-center mx-auto mb-4">
           <CheckCircle2 className="w-8 h-8 text-primary" />
         </div>
-        <h2 className="text-2xl font-bold text-foreground">视频生成完成！</h2>
+        <h2 className="text-2xl font-bold text-foreground">视频生成完成</h2>
         <p className="text-sm text-muted-foreground">你的视频已经准备好。</p>
       </div>
 
       <div className="bg-surface-2 rounded-google-lg p-6 space-y-4">
         <div className="aspect-video bg-surface-3 rounded-google overflow-hidden">
           {firstVideo ? (
-            <video src={firstVideo} controls className="w-full h-full object-cover" />
+            <video 
+              ref={videoRef}
+              src={firstVideo} 
+              controls 
+              className="w-full h-full object-cover"
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+            />
           ) : (
-            <div className="w-full h-full flex items-center justify-center">
-              <Video className="w-10 h-10 text-muted-foreground" />
+            <div className="w-full h-full flex flex-col items-center justify-center text-center p-4">
+              <Video className="w-10 h-10 text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground">视频处理中或暂无可用视频</p>
+              <p className="text-xs text-muted-foreground mt-1">请稍后刷新查看</p>
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-center gap-3">
-          <Button className="bg-primary hover:bg-primary/90 rounded-google">
-            观看视频
-          </Button>
-          <Button variant="outline" className="rounded-google">
-            <Download className="w-4 h-4 mr-2" />
-            下载
-          </Button>
-        </div>
+        {firstVideo && (
+          <div className="flex items-center justify-center gap-3">
+            <Button 
+              onClick={handlePlay}
+              className="bg-primary hover:bg-primary/90 rounded-google"
+            >
+              {isPlaying ? '暂停' : '播放'}视频
+            </Button>
+            <Button 
+              variant="outline" 
+              className="rounded-google"
+              onClick={() => {
+                if (firstVideo) {
+                  window.open(firstVideo, '_blank');
+                }
+              }}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              新窗口打开
+            </Button>
+          </div>
+        )}
       </div>
+      
+      {/* 显示所有视频片段 */}
+      {shots.length > 1 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-medium text-foreground">所有片段</h3>
+          <div className="grid grid-cols-3 gap-3">
+            {shots.map((shot) => (
+              <div key={shot.scene_number} className="aspect-video bg-surface-3 rounded-google overflow-hidden relative">
+                {shot.video_url ? (
+                  <video 
+                    src={shot.video_url} 
+                    className="w-full h-full object-cover cursor-pointer" 
+                    muted
+                    onClick={() => shot.video_url && window.open(shot.video_url, '_blank')}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Video className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                )}
+                <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
+                  <span className="text-[10px] text-white">场景 {shot.scene_number}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }

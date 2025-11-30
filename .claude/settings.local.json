@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(ruff check:*)",
+      "Bash(find:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(alembic:*)",
+      "Bash(docker --version:*)",
+      "Bash(npm run build)",
+      "Bash(npm install:*)",
+      "Bash(chmod:*)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(python3 -c:*)",
+      "Bash(xargs:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(cat:*)",
+      "Bash(kill:*)",
+      "Bash(cd /mnt/c/Learn/Lewis_AI_System/frontend timeout 15 npm run dev)",
+      "Bash(tee:*)",
+      "Bash(/dev/null)",
+      "Bash(lsof:*)",
+      "Bash(fuser:*)",
+      "Bash(ls:*)",
+      "Bash(du:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

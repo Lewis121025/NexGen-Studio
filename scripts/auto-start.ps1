@@ -48,7 +48,7 @@ if ($LASTEXITCODE -ne 0) { Write-Err "Failed to start infra services"; exit 1 }
 
 # 4) Init DB schema
 Write-Info "Running DB migrations..."
-docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python -m lewis_ai_system.cli init-db
+docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python3 -m lewis_ai_system.cli init-db
 if ($LASTEXITCODE -ne 0) { Write-Err "DB init failed"; exit 1 }
 
 # 5) Start backend + frontend

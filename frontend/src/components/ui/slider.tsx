@@ -1,7 +1,7 @@
 "use client"
 
-import * as React from "react"
 import * as SliderPrimitive from "@radix-ui/react-slider"
+import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
@@ -13,28 +13,34 @@ function Slider({
   max = 100,
   ...props
 }: React.ComponentProps<typeof SliderPrimitive.Root>) {
-  const _values = React.useMemo(
-    () =>
-      Array.isArray(value)
-        ? value
-        : Array.isArray(defaultValue)
-          ? defaultValue
-          : [min, max],
-    [value, defaultValue, min, max]
-  )
+  const _values = React.useMemo(() => {
+    if (Array.isArray(value)) return value
+    if (Array.isArray(defaultValue)) return defaultValue
+    return [min, max]
+  }, [value, defaultValue, min, max])
+
+  // 对于 exactOptionalPropertyTypes，需要显式传递或不传递这些属性
+  const sliderProps: React.ComponentProps<typeof SliderPrimitive.Root> = {
+    min,
+    max,
+    className: cn(
+      "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
+      className
+    ),
+    ...props,
+  }
+  
+  if (defaultValue !== undefined) {
+    sliderProps.defaultValue = defaultValue
+  }
+  if (value !== undefined) {
+    sliderProps.value = value
+  }
 
   return (
     <SliderPrimitive.Root
       data-slot="slider"
-      defaultValue={defaultValue}
-      value={value}
-      min={min}
-      max={max}
-      className={cn(
-        "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
-        className
-      )}
-      {...props}
+      {...sliderProps}
     >
       <SliderPrimitive.Track
         data-slot="slider-track"

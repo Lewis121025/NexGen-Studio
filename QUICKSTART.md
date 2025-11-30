@@ -6,7 +6,8 @@
 
 - Python 3.11+ （推荐3.13）
 - Node.js 18+ （前端开发需要）
-- Docker Desktop（可选，推荐）
+- PostgreSQL 15+（本地安装）
+- Redis（可选，可用内存缓存替代）
 - 至少一个AI Provider API Key（OpenRouter/Runway/Pika等）
 
 ## 步骤1：获取代码
@@ -16,46 +17,96 @@ git clone https://github.com/yourusername/Lewis_AI_System.git
 cd Lewis_AI_System
 ```
 
-## 步骤2：配置环境变量
+## 步骤2：安装本地数据库服务
 
-```bash
-# 复制环境变量模板
-cp .env.example .env
+### PostgreSQL 安装
 
-# 编辑 .env，至少填入以下密钥：
-# OPENROUTER_API_KEY=your_key_here  # 用于LLM调用
-# RUNWAY_API_KEY=your_key_here      # 用于视频生成（可选）
+**Windows (推荐使用 Chocolatey):**
+```powershell
+# 安装 Chocolatey (如果没有)
+# https://chocolatey.org/install
+
+# 安装 PostgreSQL
+choco install postgresql15 -y
+
+# 启动服务
+net start postgresql-x64-15
 ```
 
-**最小配置示例**：
+**或手动安装:**
+- 下载: https://www.postgresql.org/download/windows/
+- 安装后记住设置的密码
+
+**创建数据库用户和数据库:**
+```sql
+-- 使用 psql 或 pgAdmin 执行
+CREATE USER lewis WITH PASSWORD 'lewis_pass';
+CREATE DATABASE lewis_db OWNER lewis;
+GRANT ALL PRIVILEGES ON DATABASE lewis_db TO lewis;
+```
+
+### Redis 安装（可选）
+
+**Windows:**
+```powershell
+choco install redis-64 -y
+net start Redis
+```
+
+如果不想安装 Redis，可以在 `.env` 中设置 `REDIS_ENABLED=false`，系统会自动使用内存缓存。
+
+## 步骤3：配置环境变量
+
+```bash
+# 复制环境变量模板（如果有的话）
+# 或直接编辑 .env 文件
+```
+
+**本地运行配置示例 (.env):**
 ```env
 APP_ENV=development
 LOG_LEVEL=INFO
 SECRET_KEY=your-secret-key-here
+
+# 数据库配置（本地 PostgreSQL）
+DATABASE_URL=postgresql+asyncpg://lewis:lewis_pass@localhost:5432/lewis_db
+
+# Redis缓存（本地 Redis，可选）
+REDIS_ENABLED=true
+REDIS_URL=redis://localhost:6379/0
+
+# LLM Provider配置
 LLM_PROVIDER_MODE=openrouter
 OPENROUTER_API_KEY=sk-or-xxx
-VIDEO_PROVIDER=runway
-RUNWAY_API_KEY=your-runway-key
+
+# 视频生成配置
+VIDEO_PROVIDER=doubao
+DOUBAO_API_KEY=your-doubao-key
+
+# 代理配置（本地代理）
+HTTP_PROXY=http://127.0.0.1:7897
+HTTPS_PROXY=http://127.0.0.1:7897
 ```
 
-## 步骤3：启动系统
+## 步骤4：启动系统
 
-### 选项A：一键启动（推荐）
+### 一键启动（推荐）
 
-**Windows**:
+**Windows PowerShell:**
 ```powershell
-.\start.ps1
+# 检查本地服务状态
+.\scripts\setup-local-services.ps1 -CheckOnly
+
+# 初始化数据库并启动
+.\scripts\start-local.ps1 -InitDatabase
 ```
 
-**Linux/macOS**:
-```bash
-chmod +x start.sh
-./start.sh
+**后续启动（数据库已初始化）:**
+```powershell
+.\scripts\start-local.ps1
 ```
 
-脚本会自动完成所有设置和启动步骤。
-
-### 选项B：手动启动
+### 手动启动
 
 ```bash
 # 1. 安装Python依赖
@@ -65,23 +116,17 @@ pip install -e .
 python -m lewis_ai_system.cli init-db
 
 # 3. 启动后端
-uvicorn lewis_ai_system.main:app --host 0.0.0.0 --port 8000
+uvicorn lewis_ai_system.main:app --host 0.0.0.0 --port 8000 --reload
 
 # 4. 在新终端启动前端
 cd frontend
 npm install
 npm run dev
+
+# 5. (可选) 启动异步任务 Worker
+python -m arq lewis_ai_system.task_queue.WorkerSettings
 ```
 
-### 选项C：Docker Compose
-
-```bash
-# 启动所有服务
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f
-```
 
 ## 步骤4：访问系统
 
@@ -162,15 +207,16 @@ lsof -i :8000
 - 检查密钥格式是否正确（无引号，无空格）
 - 重启服务以加载新配置
 
-### Q3: Docker启动失败
-```bash
-# 查看详细错误
-docker-compose logs
+### Q3: PostgreSQL 连接失败
+```powershell
+# 检查 PostgreSQL 服务状态
+Get-Service postgresql*
 
-# 重新构建
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
+# 启动服务
+net start postgresql-x64-15
+
+# 测试连接
+psql -U lewis -d lewis_db -c "SELECT 1"
 ```
 
 ### Q4: 前端构建错误

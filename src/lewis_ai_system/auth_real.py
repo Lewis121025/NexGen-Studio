@@ -6,19 +6,26 @@
 from __future__ import annotations
 
 import httpx
-from typing import Optional
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException, Security, status, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt, jwk
-from jose.utils import base64url_decode
 
 from .config import settings
 from .instrumentation import get_logger
 from .database import db_manager, User
 
 logger = get_logger()
+
+def _ensure_db_ready_for_auth() -> None:
+    """Ensure database is initialized before serving authenticated requests."""
+    if not getattr(db_manager, "session_factory", None):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not initialized; configure DATABASE_URL.",
+        )
+
 
 # HTTP Bearer Token 验证器
 bearer_scheme = HTTPBearer()
@@ -148,23 +155,37 @@ jwt_validator = JWTValidator(
 
 # ==================== FastAPI 依赖项 ====================
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme)
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> dict:
-    """
-    获取当前登录用户 (必须登录)
-    
-    Returns:
-        {
-            "sub": str,           # 用户唯一标识 (Clerk User ID 或 Auth0 sub)
-            "email": str,         # 用户邮箱
-            "credits": float,     # 用户余额
-            ...
-        }
-    """
+    """Retrieve the current authenticated user."""
+    _ensure_db_ready_for_auth()
     token = credentials.credentials
     
     # 1. 验证 JWT Token
-    claims = await jwt_validator.verify_token(token)
+    # 支持两种模式：生产环境 (RS256) 和内测环境 (HS256)
+    auth_provider = getattr(settings, "auth_provider", "clerk")
+    
+    if auth_provider in ["clerk", "auth0"]:
+        # 生产环境：使用 JWKS 验证
+        claims = await jwt_validator.verify_token(token)
+    else:
+        # 内测环境：使用简单的 HS256 验证
+        try:
+            secret_key = getattr(settings, "jwt_secret_key", "dev-secret-key-change-in-production")
+            claims = jwt.decode(token, secret_key, algorithms=["HS256"])
+            
+            if "sub" not in claims:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token 缺少 sub (User ID)"
+                )
+        except JWTError as e:
+            logger.warning(f"JWT 验证失败: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"无效的认证 Token: {str(e)}",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from e
     
     # 2. 从数据库加载用户信息 (包含 credits 余额)
     user = await _get_or_create_user(claims["sub"], claims.get("email"))
@@ -180,17 +201,20 @@ async def get_current_user(
 
 async def _get_or_create_user(sub: str, email: str | None = None) -> User:
     """从数据库获取用户,不存在则自动创建"""
+    _ensure_db_ready_for_auth()
     async with db_manager.get_session() as db:
         from sqlalchemy import select
         
         # 查询用户
         stmt = select(User).where(User.external_id == sub)
-        user = await db.scalar(stmt)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
         
         if not user:
             # 首次登录,创建用户记录
             user = User(
                 external_id=sub,
+                user_id=sub,  # 保持兼容性
                 email=email or f"{sub}@unknown.com",
                 credits_usd=10.0,  # 新用户赠送 $10
                 is_admin=False,

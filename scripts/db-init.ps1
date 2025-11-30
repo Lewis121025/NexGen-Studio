@@ -72,13 +72,29 @@ Write-Host ""
 Write-Host "🧱 执行数据库表结构初始化..." -ForegroundColor Yellow
 Write-Host ""
 
-docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python -m lewis_ai_system.cli init-db
+docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python3 -m lewis_ai_system.cli init-db
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "✗ 数据库初始化失败" -ForegroundColor Red
     Write-Host "查看日志: docker compose logs postgres" -ForegroundColor Yellow
     exit 1
+}
+
+Write-Host "✓ 数据库表结构初始化完成" -ForegroundColor Green
+Write-Host ""
+
+# 执行种子数据创建
+Write-Host "🌱 创建种子数据（测试用户和示例项目）..." -ForegroundColor Yellow
+Write-Host ""
+
+docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python3 scripts/seed_data.py
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "⚠️  种子数据创建失败（非致命错误）" -ForegroundColor Yellow
+} else {
+    Write-Host "✓ 种子数据创建完成" -ForegroundColor Green
 }
 
 Write-Host ""

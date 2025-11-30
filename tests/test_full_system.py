@@ -96,7 +96,7 @@ def test_health_endpoints():
 
 def test_creative_mode_lifecycle(mock_providers):
     # 1. Create Project
-    response = client.post("/creative/projects", json={
+    response = client.post("/v1/creative/projects", json={
         "title": "Test Project",
         "brief": "A test project brief."
     })
@@ -111,13 +111,13 @@ def test_creative_mode_lifecycle(mock_providers):
     # If the current API is async/background, we might just check status.
     
     # Let's check project status
-    response = client.get(f"/creative/projects/{project_id}")
+    response = client.get(f"/v1/creative/projects/{project_id}")
     assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     assert response.json()["project"]["title"] == "Test Project"
 
 def test_general_mode_lifecycle(mock_providers):
     # 1. Create Session
-    response = client.post("/general/sessions", json={
+    response = client.post("/v1/general/sessions", json={
         "goal": "Test Goal",
         "user_id": "test_user"
     })
@@ -125,14 +125,14 @@ def test_general_mode_lifecycle(mock_providers):
     session_id = response.json()["session"]["id"]
     
     # 2. Iterate (Mocked)
-    response = client.post(f"/general/sessions/{session_id}/iterate", json={
+    response = client.post(f"/v1/general/sessions/{session_id}/iterate", json={
         "input": "Start working"
     })
     assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     assert response.json()["session"]["state"] == GeneralSessionState.COMPLETED
     
     # 3. Check History
-    response = client.get(f"/general/sessions/{session_id}")
+    response = client.get(f"/v1/general/sessions/{session_id}")
     assert response.status_code == 200, f"Status: {response.status_code}, Body: {response.text}"
     assert response.json()["session"]["goal"] == "Test Goal"
 

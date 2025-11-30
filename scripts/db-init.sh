@@ -63,7 +63,7 @@ echo ""
 echo "[info] Running database table initialization..."
 echo ""
 
-docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python -m lewis_ai_system.cli init-db
+docker compose run --rm -e SKIP_ENTRYPOINT_DB_INIT=1 lewis-api python3 -m lewis_ai_system.cli init-db
 
 if [[ $? -ne 0 ]]; then
   echo ""

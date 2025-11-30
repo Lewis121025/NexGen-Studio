@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Awaitable, Callable, Literal
 
 from .config import settings
+
 from .instrumentation import TelemetryEvent, emit_event, get_logger
 
 logger = get_logger()
@@ -29,13 +32,18 @@ class CostAnomaly:
     
     entity_id: str
     entity_type: Literal["project", "session"]
-    alert_type: Literal["rate_spike", "budget_exceeded", "projected_overrun"]
+    alert_type: Literal["rate_spike", "budget_exceeded", "projected_overrun", "budget_threshold"]
     current_rate: float
     expected_rate: float
     projected_total: float
     budget_limit: float
     timestamp: datetime
     message: str
+    severity: Literal["info", "warning", "critical"]
+
+
+
+AlertHandler = Callable[[CostAnomaly], Awaitable[None] | None]
 
 
 class CostMonitor:
@@ -46,8 +54,56 @@ class CostMonitor:
         self.anomalies: list[CostAnomaly] = []
         self.paused_entities: set[str] = set()
         self.budget_limits: dict[str, float] = {}
+        self.threshold_alerts: dict[str, set[int]] = {}
+        self.alert_handlers: list[AlertHandler] = []
+        self.last_alert_at: dict[tuple[str, str], datetime] = {}
+        self.alert_cooldown_seconds = 120
+    
+    def register_alert_handler(self, handler: AlertHandler) -> None:
+        """Register an alert handler callback."""
+        self.alert_handlers.append(handler)
+    
+    def _determine_severity(
+        self,
+        alert_type: str,
+        budget_percentage: float | None,
+        multiplier: float,
+    ) -> Literal["info", "warning", "critical"]:
+        if alert_type == "budget_exceeded":
+            return "critical"
+        if alert_type == "projected_overrun":
+            return "warning" if budget_percentage and budget_percentage < 120 else "critical"
+        if alert_type == "rate_spike":
+            if multiplier >= 3:
+                return "critical"
+            return "warning"
+        if alert_type == "budget_threshold":
+            if budget_percentage and budget_percentage >= 100:
+                return "critical"
+            return "warning"
+        return "info"
+    
+    def _should_emit_alert(self, entity_id: str, alert_type: str, timestamp: datetime) -> bool:
+        key = (entity_id, alert_type)
+        last = self.last_alert_at.get(key)
+        if last and (timestamp - last).total_seconds() < self.alert_cooldown_seconds:
+            return False
+        self.last_alert_at[key] = timestamp
+        return True
+    
+    def _dispatch_alert(self, anomaly: CostAnomaly) -> None:
+        if not self.alert_handlers:
+            return
+        for handler in self.alert_handlers:
+            try:
+                result = handler(anomaly)
+                if inspect.isawaitable(result):
+                    asyncio.ensure_future(result)
+            except Exception as exc:
+                logger.error(f"Alert handler failed: {exc}")
     
     def record_snapshot(
+
         self,
         entity_id: str,
         entity_type: Literal["project", "session"],
@@ -178,9 +234,40 @@ class CostMonitor:
         current_cost = self.snapshots[entity_id][-1].cumulative_cost
         current_rate = self.calculate_cost_rate(entity_id, window_minutes=10)
         historical_rate = self.calculate_historical_rate(entity_id, percentile=0.95)
-        
+        budget_percentage = (current_cost / budget_limit * 100) if budget_limit else None
+
+        # Threshold alerts based on configured percentages
+        triggered_thresholds = self.threshold_alerts.setdefault(entity_id, set())
+        if budget_percentage is not None:
+            for threshold in sorted(settings.budget.cost_alert_percentages):
+                if threshold in triggered_thresholds:
+                    continue
+                if budget_percentage >= threshold:
+                    triggered_thresholds.add(threshold)
+                    severity = self._determine_severity("budget_threshold", budget_percentage, 1.0)
+                    message = (
+                        f"Budget consumption reached {threshold}% "
+                        f"(${current_cost:.2f}/${budget_limit:.2f})"
+                    )
+                    anomalies.append(
+                        CostAnomaly(
+                            entity_id=entity_id,
+                            entity_type=entity_type,
+                            alert_type="budget_threshold",
+                            current_rate=current_rate,
+                            expected_rate=historical_rate,
+                            projected_total=current_cost,
+                            budget_limit=budget_limit,
+                            timestamp=datetime.now(timezone.utc),
+                            message=message,
+                            severity=severity,
+                        )
+                    )
+                    logger.warning(message)
+
         # Check 1: Budget exceeded
         if current_cost >= budget_limit:
+            severity = self._determine_severity("budget_exceeded", budget_percentage, 1.0)
             anomaly = CostAnomaly(
                 entity_id=entity_id,
                 entity_type=entity_type,
@@ -190,7 +277,8 @@ class CostMonitor:
                 projected_total=current_cost,
                 budget_limit=budget_limit,
                 timestamp=datetime.now(timezone.utc),
-                message=f"Budget exceeded: ${current_cost:.2f} >= ${budget_limit:.2f}"
+                message=f"Budget exceeded: ${current_cost:.2f} >= ${budget_limit:.2f}",
+                severity=severity,
             )
             anomalies.append(anomaly)
             logger.warning(anomaly.message)
@@ -198,6 +286,8 @@ class CostMonitor:
         # Check 2: Rate spike
         if historical_rate > 0 and current_rate > historical_rate * threshold_multiplier:
             projected = self.project_final_cost(entity_id, completion_percentage)
+            multiplier = current_rate / historical_rate if historical_rate else 0.0
+            severity = self._determine_severity("rate_spike", budget_percentage, multiplier)
             anomaly = CostAnomaly(
                 entity_id=entity_id,
                 entity_type=entity_type,
@@ -211,7 +301,8 @@ class CostMonitor:
                     f"Cost rate spike detected: ${current_rate:.4f}/min "
                     f"(expected: ${historical_rate:.4f}/min, "
                     f"threshold: {threshold_multiplier}x)"
-                )
+                ),
+                severity=severity,
             )
             anomalies.append(anomaly)
             logger.warning(anomaly.message)
@@ -220,6 +311,7 @@ class CostMonitor:
         if completion_percentage > 0:
             projected = self.project_final_cost(entity_id, completion_percentage)
             if projected and projected > budget_limit * 1.1:  # 10% buffer
+                severity = self._determine_severity("projected_overrun", budget_percentage, 1.0)
                 anomaly = CostAnomaly(
                     entity_id=entity_id,
                     entity_type=entity_type,
@@ -232,15 +324,17 @@ class CostMonitor:
                     message=(
                         f"Projected cost overrun: ${projected:.2f} > ${budget_limit:.2f} "
                         f"(current: ${current_cost:.2f} at {completion_percentage*100:.1f}% complete)"
-                    )
+                    ),
+                    severity=severity,
                 )
                 anomalies.append(anomaly)
                 logger.warning(anomaly.message)
+
         
         # Store anomalies
         self.anomalies.extend(anomalies)
         
-        # Emit telemetry events
+        # Emit telemetry events and dispatch alerts respecting cooldown
         for anomaly in anomalies:
             emit_event(
                 TelemetryEvent(
@@ -253,11 +347,15 @@ class CostMonitor:
                         "expected_rate": anomaly.expected_rate,
                         "projected_total": anomaly.projected_total,
                         "budget_limit": anomaly.budget_limit,
+                        "severity": anomaly.severity,
                     }
                 )
             )
+            if self._should_emit_alert(anomaly.entity_id, anomaly.alert_type, anomaly.timestamp):
+                self._dispatch_alert(anomaly)
         
         return anomalies
+
     
     def should_pause_entity(
         self,

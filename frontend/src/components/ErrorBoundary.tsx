@@ -1,6 +1,7 @@
 'use client';
 
 import { Component, ReactNode } from 'react';
+import type { ErrorInfo } from 'react';
 
 interface Props {
   children: ReactNode;
@@ -22,14 +23,14 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, errorInfo: any) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error('ErrorBoundary caught:', error, errorInfo);
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        this.props.fallback || (
+        this.props.fallback ?? (
           <div className="h-screen w-screen flex items-center justify-center bg-surface-1">
             <div className="max-w-md p-6 bg-surface-2 rounded-google-lg border border-destructive/30">
               <h2 className="text-lg font-semibold text-destructive mb-2">

@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import settings
-from .routers import creative_router, general_router, governance_router
+from .versioning import version_middleware
+from .routers.versioned import (
+    v1_router,
+    v2_router,
+    legacy_router,
+    get_all_versions_info,
+)
 
 
 @asynccontextmanager
@@ -38,7 +45,10 @@ async def lifespan(app: FastAPI):
             creative_router_module.creative_orchestrator = creative_workflow_module.creative_orchestrator
             logger.info("创意存储库已切换到数据库后端")
         except Exception as e:
-            logger.error(f"数据库初始化失败: {e}")
+            logger.error(f"Database initialization failed: {e}", exc_info=True)
+            logger.warning("数据库初始化失败，应用将继续使用内存存储启动")
+    else:
+        logger.info("未配置数据库; 使用内存存储")
     
     # 初始化 Redis 缓存
     if settings.redis_enabled:
@@ -88,6 +98,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# API 版本中间件
+app.middleware("http")(version_middleware)
+
 # CORS 中间件
 app.add_middleware(
     CORSMiddleware,
@@ -105,10 +118,13 @@ if settings.environment == "production":
         allowed_hosts=hosts or ["*"],
     )
 
-# 包含路由
-app.include_router(creative_router)
-app.include_router(general_router)
-app.include_router(governance_router)
+# 包含路由 - 只包含版本化路由，避免重复注册
+# 基本API路由通过版本化路由提供
+
+# 版本化 API 路由
+app.include_router(v1_router)   # /v1/*
+app.include_router(v2_router)   # /v2/*
+app.include_router(legacy_router)  # 兼容旧版本
 
 
 @app.exception_handler(Exception)
@@ -122,8 +138,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"未处理的异常在 {request.method} {request.url.path}: {exc}", exc_info=True)
     
     # 在开发环境中始终包含回溯，在生产环境中包含错误详细信息
-    import os
-    env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))
+    env = settings.environment
     if env != "production":
         traceback_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         return JSONResponse(
@@ -155,6 +170,12 @@ async def root():
         "version": settings.api_version,
         "docs": "/docs",
     }
+
+
+@app.get("/api/versions")
+async def list_api_versions() -> dict[str, Any]:
+    """列出所有可用的 API 版本信息。"""
+    return get_all_versions_info()
 
 
 @app.get("/healthz")

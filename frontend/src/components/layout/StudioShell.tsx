@@ -5,9 +5,10 @@
 
 'use client';
 
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { useStudioStore } from '@/lib/stores/studio';
 import { GripVertical } from 'lucide-react';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+
+import { useStudioStore } from '@/lib/stores/studio';
 
 interface StudioShellProps {
   sidebar: React.ReactNode;

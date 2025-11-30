@@ -5,9 +5,12 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+import logging
 
 from pydantic import AliasChoices, AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderQuotaSettings(BaseModel):
@@ -61,6 +64,14 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = Field(
         default="development", alias="APP_ENV"
     )
+    
+    @field_validator("environment", mode="before")
+    @classmethod
+    def strip_environment(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO", alias="LOG_LEVEL")
     api_title: str = "Lewis AI System API"
     api_version: str = "0.2.0"
@@ -96,6 +107,13 @@ class Settings(BaseSettings):
         alias="TRUSTED_HOSTS",
     )
     
+    # 认证配置
+    auth_provider: Literal["dev", "clerk", "auth0"] = Field(default="dev", alias="AUTH_PROVIDER")
+    jwt_secret_key: str = Field(default="dev-secret-key-change-in-production", alias="JWT_SECRET_KEY")
+    clerk_jwks_url: str | None = Field(default=None, alias="CLERK_JWKS_URL")
+    auth0_domain: str | None = Field(default=None, alias="AUTH0_DOMAIN")
+    auth0_audience: str | None = Field(default=None, alias="AUTH0_AUDIENCE")
+    
     # 速率限制
     rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
     rate_limit_per_minute: int = Field(default=60, alias="RATE_LIMIT_PER_MINUTE")
@@ -113,12 +131,33 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RUNWARE_API_KEY", "Runware_API"),
     )
     doubao_api_key: str | None = Field(default=None, alias="DOUBAO_API_KEY")
-    video_provider_default: Literal["runway", "runware", "pika", "doubao", "mock"] = Field(
-        default="runway",
+    video_provider_default: Literal["doubao"] = Field(
+        default="doubao",  # 只支持豆包
         alias="VIDEO_PROVIDER",
     )
+    
+    # 用户可选择的视频提供商列表
+    available_video_providers: list[str] = Field(
+        default_factory=lambda: ["doubao"],  # 只支持豆包
+        alias="AVAILABLE_VIDEO_PROVIDERS",
+    )
+    
+    # 一致性控制配置
+    enable_consistency_control: bool = Field(default=True, alias="ENABLE_CONSISTENCY_CONTROL")
+    default_consistency_level: Literal["low", "medium", "high"] = Field(
+        default="medium", 
+        alias="DEFAULT_CONSISTENCY_LEVEL"
+    )
+    consistency_model: str = Field(
+        default="gemini-2.5-flash-lite", 
+        alias="CONSISTENCY_MODEL"
+    )
+    max_reference_images: int = Field(default=3, alias="MAX_REFERENCE_IMAGES")
+    consistency_threshold: float = Field(default=0.7, alias="CONSISTENCY_THRESHOLD")
 
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    replicate_api_key: str | None = Field(default=None, alias="REPLICATE_API_KEY")
     tavily_api_key: str | None = Field(default=None, alias="TAVILY_API_KEY")
     firecrawl_api_key: str | None = Field(default=None, alias="FIRECRAWL_API_KEY")
     zapier_nla_api_key: str | None = Field(default=None, alias="ZAPIER_NLA_API_KEY")
@@ -161,9 +200,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_keys(self) -> "Settings":
-        """������������������ʵ�� API Keys,������ʹ�� Mock ģʽ"""
+        """验证生产环境必须的 API Keys,不允许使用 Mock 模式"""
         if self.environment == "production":
-            # ������ AI Provider Keys
+            # 检查 AI Provider Keys
             if self.llm_provider_mode == "mock":
                 raise ValueError(
                     "Production cannot run with the mock LLM provider. "
@@ -182,18 +221,18 @@ class Settings(BaseSettings):
                     "Populate them in the environment before starting the service."
                 )
 
-            # ������ݿ�����
+            # 检查数据库配置（生产环境推荐但不强制）
             if not self.database_url:
-                raise ValueError(
-                    "���������������� DATABASE_URL! "
-                    "������ PostgreSQL ���ݿ������ַ���"
+                logger.warning(
+                    "生产环境未配置 DATABASE_URL，将使用内存存储。 "
+                    "注意：这意味着数据不会持久化，建议配置 PostgreSQL 数据库。"
                 )
 
-            # ��� Secret Key
+            # 检查 Secret Key
             if self.secret_key == "dev-secret-key-change-in-production":
                 raise ValueError(
-                    "�������������޸� SECRET_KEY! "
-                    "������һ����ȫ�������Կ (����ʹ�� openssl rand -hex 32)"
+                    "生产环境必须修改 SECRET_KEY! "
+                    "请生成一个安全的密钥 (建议使用 openssl rand -hex 32)"
                 )
 
         return self

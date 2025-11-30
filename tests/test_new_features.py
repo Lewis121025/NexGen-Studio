@@ -166,9 +166,17 @@ class TestCostMonitor:
         assert reason == "paused_budget"
 
 
+# Helper to check if E2B API key is available
+def _has_e2b_key() -> bool:
+    import os
+    return bool(os.environ.get("E2B_API_KEY"))
+
+
 class TestSandbox:
-    """Test enhanced sandbox functionality."""
-    
+    @pytest.mark.skipif(
+        not _has_e2b_key(),
+        reason="E2B sandbox tests require real API key. Set E2B_API_KEY environment variable to run these tests."
+    )
     def test_execute_python_basic(self):
         """Test basic Python execution."""
         sandbox = EnhancedSandbox(timeout_seconds=5)
@@ -182,6 +190,10 @@ class TestSandbox:
         # Result might be in results list or stdout
         assert result["result"] is not None or "4" in str(result.get("stdout", "")) or "4" in str(result.get("results", []))
     
+    @pytest.mark.skipif(
+        not _has_e2b_key(),
+        reason="E2B sandbox tests require real API key. Set E2B_API_KEY environment variable to run these tests."
+    )
     def test_execute_python_with_output(self):
         """Test Python execution with stdout."""
         sandbox = EnhancedSandbox(timeout_seconds=5)
@@ -196,6 +208,10 @@ print("Hello, sandbox!")
         # Check if "done" is in results or stdout
         assert result["result"] == "done" or "done" in str(result.get("results", []))
     
+    @pytest.mark.skipif(
+        not _has_e2b_key(),
+        reason="E2B sandbox tests require real API key. Set E2B_API_KEY environment variable to run these tests."
+    )
     def test_execute_python_timeout(self):
         """Test timeout handling."""
         sandbox = EnhancedSandbox(timeout_seconds=1)
@@ -211,6 +227,10 @@ while True:
         # E2B may handle timeout differently, so check for error or timeout indication
         assert result["error"] is not None or len(result.get("stderr", "")) > 0
     
+    @pytest.mark.skipif(
+        not _has_e2b_key(),
+        reason="E2B sandbox tests require real API key. Set E2B_API_KEY environment variable to run these tests."
+    )
     def test_execute_python_restricted(self):
         """Test restricted builtins."""
         sandbox = EnhancedSandbox(timeout_seconds=5)

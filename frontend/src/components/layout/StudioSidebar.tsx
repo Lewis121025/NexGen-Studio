@@ -5,25 +5,28 @@
 
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useStudioStore, selectSessionsByMode } from '@/lib/stores/studio';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
+import { formatDistanceToNow } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
 import {
   Plus,
   MessageSquare,
   Video,
-  Image,
+  Image as ImageIcon,
   FileText,
   Clock,
   Trash2,
-  Star,
 } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
-import { zhCN } from 'date-fns/locale';
+import Image from 'next/image';
+import { useMemo, useState } from 'react';
+import type { JSX } from 'react';
 
-export default function StudioSidebar() {
+import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
+import { useStudioStore } from '@/lib/stores/studio';
+import type { AssetLibraryItem, Session } from '@/lib/stores/types';
+import { cn } from '@/lib/utils';
+
+export default function StudioSidebar(): JSX.Element {
   const mode = useStudioStore((state) => state.mode);
   const currentSessionId = useStudioStore((state) => state.currentSessionId);
   const createSession = useStudioStore((state) => state.createSession);
@@ -34,15 +37,13 @@ export default function StudioSidebar() {
 
   const [activeTab, setActiveTab] = useState<'sessions' | 'assets'>('sessions');
 
-  // 使用 useMemo 缓存筛选结果,避免无限渲染
-  const filteredSessions = useMemo(() => {
-    return (sessions || []).filter((s) => s.mode === mode);
-  }, [sessions, mode]);
-  
-  // 安全的资产列表
-  const safeAssets = useMemo(() => assets || [], [assets]);
+  // ʹ�� useMemo ����ɸѡ���,����������Ⱦ
+  const filteredSessions = useMemo(
+    () => sessions.filter((s) => s.mode === mode),
+    [sessions, mode],
+  );
 
-  const handleNewSession = () => {
+  const handleNewSession = (): void => {
     const session = createSession(mode);
     // 自动切换到新会话
     switchSession(session.id);
@@ -88,7 +89,7 @@ export default function StudioSidebar() {
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              <Image className="w-3 h-3 mr-1" />
+              <ImageIcon className="w-3 h-3 mr-1" />
               资产
             </Button>
           )}
@@ -107,7 +108,7 @@ export default function StudioSidebar() {
             onDelete={deleteSession}
           />
         ) : (
-          <AssetLibrary assets={safeAssets} />
+          <AssetLibrary assets={assets} />
         )}
       </div>
 
@@ -126,7 +127,7 @@ export default function StudioSidebar() {
 
 // ==================== 会话列表 ====================
 interface SessionListProps {
-  sessions: any[];
+  sessions: Session[];
   currentSessionId: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -137,13 +138,10 @@ function SessionList({
   currentSessionId,
   onSelect,
   onDelete,
-}: SessionListProps) {
-  // 安全检查
-  const safeSessions = sessions || [];
-  
+}: SessionListProps): JSX.Element {
   return (
     <div className="space-y-1 py-2">
-      {safeSessions.length === 0 ? (
+      {sessions.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
           <MessageSquare className="w-12 h-12 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground">暂无历史记录</p>
@@ -152,7 +150,7 @@ function SessionList({
           </p>
         </div>
       ) : (
-        safeSessions.map((session) => (
+        sessions.map((session) => (
           <div
             key={session.id}
             className={cn(
@@ -222,25 +220,24 @@ function SessionList({
 
 // ==================== 资产库 ====================
 interface AssetLibraryProps {
-  assets: any[];
+  assets: AssetLibraryItem[];
 }
 
-function AssetLibrary({ assets }: AssetLibraryProps) {
+function AssetLibrary({ assets }: AssetLibraryProps): JSX.Element {
   // 安全检查
-  const safeAssets = assets || [];
   
   return (
     <div className="space-y-2 py-2">
-      {safeAssets.length === 0 ? (
+      {assets.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
-          <Image className="w-12 h-12 text-muted-foreground/30 mb-3" />
+          <ImageIcon className="w-12 h-12 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground">暂无资产</p>
           <p className="text-xs text-muted-foreground/70 mt-1">
             生成的视频和图片会显示在这里
           </p>
         </div>
       ) : (
-        safeAssets.map((asset) => (
+        assets.map((asset) => (
           <div
             key={asset.id}
             className="group rounded-google overflow-hidden bg-surface-3/30 hover:bg-surface-3 transition-all cursor-pointer"
@@ -248,10 +245,12 @@ function AssetLibrary({ assets }: AssetLibraryProps) {
             {/* 缩略图 */}
             {asset.thumbnailUrl && (
               <div className="aspect-video bg-surface-3 relative overflow-hidden">
-                <img
+                <Image
                   src={asset.thumbnailUrl}
                   alt={asset.title}
-                  className="w-full h-full object-cover"
+                  className="object-cover"
+                  fill
+                  sizes="100vw"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
@@ -270,7 +269,7 @@ function AssetLibrary({ assets }: AssetLibraryProps) {
                     <Video className="w-3 h-3 text-primary" />
                   )}
                   {asset.type === 'image' && (
-                    <Image className="w-3 h-3 text-primary" />
+                    <ImageIcon className="w-3 h-3 text-primary" />
                   )}
                   {asset.type === 'script' && (
                     <FileText className="w-3 h-3 text-primary" />

@@ -1,33 +1,74 @@
-"""FastAPI router for Creative Mode."""
+"""FastAPI router for Creative Mode projects."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ..creative.models import CreativeProjectCreateRequest, CreativeProjectResponse, CreativeProjectListResponse
-from ..creative.repository import creative_repository
+from ..creative.models import (
+    CreativeProjectCreateRequest,
+    CreativeProjectResponse,
+    CreativeProjectListResponse,
+)
 from ..creative.workflow import creative_orchestrator
+from ..creative.repository import creative_repository
+from ..config import settings
 
-router = APIRouter(prefix="/creative", tags=["creative"])
+router = APIRouter()
+
+
+@router.get("/video-providers")
+async def get_available_video_providers() -> dict:
+    """获取可用的视频提供商列表。"""
+    return {"providers": settings.available_video_providers}
 
 
 @router.post("/projects", response_model=CreativeProjectResponse, status_code=201)
 async def create_project(payload: CreativeProjectCreateRequest) -> CreativeProjectResponse:
+    """创建新的创作项目。"""
     try:
         project = await creative_orchestrator.create_project(payload)
     except Exception as exc:
         from ..instrumentation import get_logger
         logger = get_logger()
-        logger.error(f"Error creating project: {exc}", exc_info=True)
+        logger.error(f"Error creating creative project: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to create project: {str(exc)}") from exc
     return CreativeProjectResponse(project=project)
 
 
+@router.get("/projects/{project_id}", response_model=CreativeProjectResponse)
+async def get_project(project_id: str) -> CreativeProjectResponse:
+    """获取创作项目详情。"""
+    try:
+        project = await creative_repository.get(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        from ..instrumentation import get_logger
+        logger = get_logger()
+        logger.error(f"Error getting project {project_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(exc)}") from exc
+    return CreativeProjectResponse(project=project)
+
+
+@router.get("/projects", response_model=CreativeProjectListResponse)
+async def list_projects(tenant_id: str = "demo", limit: int = 50) -> CreativeProjectListResponse:
+    """列出租户的所有创作项目。"""
+    try:
+        projects = await creative_repository.list_for_tenant(tenant_id)
+    except Exception as exc:
+        from ..instrumentation import get_logger
+        logger = get_logger()
+        logger.error(f"Error listing projects for tenant {tenant_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list projects: {str(exc)}") from exc
+    return CreativeProjectListResponse(projects=list(projects)[:limit])
+
+
 @router.post("/projects/{project_id}/approve-script", response_model=CreativeProjectResponse)
 async def approve_script(project_id: str) -> CreativeProjectResponse:
+    """批准脚本并继续到分镜阶段。"""
     try:
         project = await creative_orchestrator.approve_script(project_id)
-    except KeyError as exc:  # pragma: no cover - FastAPI handles
+    except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -41,10 +82,13 @@ async def approve_script(project_id: str) -> CreativeProjectResponse:
 
 @router.post("/projects/{project_id}/advance", response_model=CreativeProjectResponse)
 async def advance_project(project_id: str) -> CreativeProjectResponse:
+    """推进项目到下一个自动阶段。"""
     try:
         project = await creative_orchestrator.advance(project_id)
-    except KeyError as exc:  # pragma: no cover - FastAPI handles
+    except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         from ..instrumentation import get_logger
         logger = get_logger()
@@ -53,10 +97,23 @@ async def advance_project(project_id: str) -> CreativeProjectResponse:
     return CreativeProjectResponse(project=project)
 
 
-@router.post("/projects/{project_id}/approve-preview", response_model=CreativeProjectResponse)
-async def approve_preview(project_id: str) -> CreativeProjectResponse:
+@router.post("/projects/{project_id}/pause", response_model=CreativeProjectResponse)
+async def pause_project(project_id: str, reason: str = "user_request") -> CreativeProjectResponse:
+    """暂停项目。"""
     try:
-        project = await creative_orchestrator.approve_preview(project_id)
+        project = await creative_repository.get(project_id)
+        from ..creative.models import CreativeProjectState
+        from datetime import datetime, timezone
+        
+        if project.state == CreativeProjectState.PAUSED:
+            raise ValueError("Project is already paused")
+        
+        project.pre_pause_state = project.state
+        project.pause_reason = reason
+        project.paused_at = datetime.now(timezone.utc)
+        project.mark_state(CreativeProjectState.PAUSED)
+        
+        await creative_repository.upsert(project)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -64,106 +121,38 @@ async def approve_preview(project_id: str) -> CreativeProjectResponse:
     except Exception as exc:
         from ..instrumentation import get_logger
         logger = get_logger()
-        logger.error(f"Error approving preview for project {project_id}: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to approve preview: {str(exc)}") from exc
+        logger.error(f"Error pausing project {project_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to pause project: {str(exc)}") from exc
     return CreativeProjectResponse(project=project)
 
 
-@router.get("/projects", response_model=CreativeProjectListResponse)
-async def list_projects(tenant_id: str = "demo") -> CreativeProjectListResponse:
+@router.post("/projects/{project_id}/resume", response_model=CreativeProjectResponse)
+async def resume_project(project_id: str) -> CreativeProjectResponse:
+    """恢复暂停的项目。"""
     try:
-        projects = await creative_repository.list_for_tenant(tenant_id)
+        project = await creative_repository.get(project_id)
+        from ..creative.models import CreativeProjectState
+        
+        if project.state != CreativeProjectState.PAUSED:
+            raise ValueError("Project is not paused")
+        
+        if project.pre_pause_state:
+            project.mark_state(project.pre_pause_state)
+        else:
+            project.mark_state(CreativeProjectState.BRIEF_PENDING)
+        
+        project.pre_pause_state = None
+        project.pause_reason = None
+        project.paused_at = None
+        
+        await creative_repository.upsert(project)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         from ..instrumentation import get_logger
         logger = get_logger()
-        logger.error(f"Error listing projects for tenant {tenant_id}: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list projects: {str(exc)}") from exc
-
-    return CreativeProjectListResponse(projects=list(projects))
-
-
-@router.get("/projects/{project_id}", response_model=CreativeProjectResponse)
-async def get_project(project_id: str) -> CreativeProjectResponse:
-    from ..instrumentation import get_logger
-    logger = get_logger()
-    
-    try:
-        # Get project
-        project = await creative_repository.get(project_id)
-        logger.debug(f"Retrieved project {project_id}, state: {project.state}, type: {type(project)}")
-    except KeyError as exc:  # pragma: no cover
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error(f"Error getting project {project_id}: {exc}", exc_info=True)
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(exc)}") from exc
-    
-    try:
-        # Validate the project can be serialized
-        response = CreativeProjectResponse(project=project)
-        # Try to serialize to catch any serialization errors early
-        _ = response.model_dump(mode="json")
-        return response
-    except Exception as exc:
-        logger.error(f"Error serializing project {project_id}: {exc}", exc_info=True)
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Serialization error: {str(exc)}") from exc
-
-
-@router.post("/projects/{project_id}/generate-video", status_code=202)
-async def generate_video(project_id: str) -> dict[str, Any]:
-    """
-    提交视频生成任务 (异步)
-    
-    Returns:
-        202 Accepted + task_id (用于轮询状态)
-    """
-    from ..task_queue import task_queue
-    from ..instrumentation import get_logger
-    
-    logger = get_logger()
-    
-    try:
-        # 获取项目信息
-        project = await creative_repository.get(project_id)
-        
-        # 检查项目状态
-        if not project.script:
-            raise HTTPException(status_code=400, detail="Project has no script")
-        if not project.storyboard:
-            raise HTTPException(status_code=400, detail="Project has no storyboard")
-        
-        # 提交任务到队列
-        task_id = await task_queue.enqueue_video_generation(
-            project_id=project.id,
-            script=project.script,
-            storyboard=project.storyboard,
-        )
-        
-        logger.info(f"Video generation task queued: {task_id} for project {project_id}")
-        
-        return {
-            "task_id": task_id,
-            "status": "queued",
-            "message": "视频生成任务已提交,请使用 task_id 查询进度"
-        }
-    
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error(f"Error queuing video generation for project {project_id}: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(exc)}") from exc
-
-
-@router.get("/tasks/{task_id}")
-async def get_task_status(task_id: str) -> dict[str, Any]:
-    """查询任务状态"""
-    from ..task_queue import task_queue
-    
-    try:
-        status = await task_queue.get_task_status(task_id)
-        return status
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to get task status: {str(exc)}") from exc
+        logger.error(f"Error resuming project {project_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to resume project: {str(exc)}") from exc
+    return CreativeProjectResponse(project=project)

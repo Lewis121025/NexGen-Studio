@@ -5,12 +5,9 @@
 
 'use client';
 
-import { useStudioStore } from '@/lib/stores/studio';
+import { Settings2, Info } from 'lucide-react';
+
 import { Label } from '@/components/ui/label';
-import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
-import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -18,29 +15,52 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings2, Info } from 'lucide-react';
-// import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { useStudioStore } from '@/lib/stores/studio';
 
 export default function ConfigPanel() {
   const mode = useStudioStore((state) => state.mode);
 
   return (
-    <div className="h-full flex flex-col bg-surface-2">
-      {/* 标题栏 */}
-      <div className="p-4 border-b border-border/30">
-        <div className="flex items-center gap-2">
-          <Settings2 className="w-5 h-5 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">
-            {mode === 'general' ? '对话配置' : '创作设置'}
-          </h2>
+    <TooltipProvider>
+      <div className="h-full flex flex-col bg-surface-2">
+        {/* 标题栏 */}
+        <div className="p-4 border-b border-border/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5 text-primary" />
+              <h2 className="text-sm font-semibold text-foreground">
+                {mode === 'general' ? '对话配置' : '创作设置'}
+              </h2>
+            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="w-6 h-6">
+                  <Info className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="max-w-xs">
+                <p className="text-xs">
+                  这些参数配置会保存在本地。部分高级参数需要后端支持才能完全生效。
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
+        {/* 配置内容 */}
+        <div className="flex-1 overflow-y-auto px-4 scrollbar-thin scrollbar-thumb-surface-3 scrollbar-track-transparent">
+          {mode === 'general' ? <GeneralConfigPanel /> : <CreativeConfigPanel />}
         </div>
       </div>
-
-      {/* 配置内容 */}
-      <div className="flex-1 overflow-y-auto px-4 scrollbar-thin scrollbar-thumb-surface-3 scrollbar-track-transparent">
-        {mode === 'general' ? <GeneralConfigPanel /> : <CreativeConfigPanel />}
-      </div>
-    </div>
+    </TooltipProvider>
   );
 }
 
@@ -51,76 +71,11 @@ function GeneralConfigPanel() {
 
   return (
     <div className="space-y-6 py-4">
-      {/* 模型参数 */}
-      <ConfigSection title="模型参数">
-        {/* Temperature */}
-        <ConfigItem
-          label="Temperature"
-          description="控制输出的随机性,越高越创造性"
-        >
-          <div className="space-y-3">
-            <Slider
-              value={[generalConfig.temperature]}
-              onValueChange={([value]) =>
-                updateGeneralConfig('temperature', value)
-              }
-              min={0}
-              max={1}
-              step={0.1}
-              className="w-full"
-            />
-            <div className="text-xs text-right text-muted-foreground">
-              {generalConfig.temperature.toFixed(1)}
-            </div>
-          </div>
-        </ConfigItem>
-
-        <Separator className="bg-border/30" />
-
-        {/* Top-K */}
-        <ConfigItem label="Top-K" description="采样候选词数量">
-          <div className="space-y-3">
-            <Slider
-              value={[generalConfig.topK]}
-              onValueChange={([value]) => updateGeneralConfig('topK', value)}
-              min={1}
-              max={100}
-              step={1}
-              className="w-full"
-            />
-            <div className="text-xs text-right text-muted-foreground">
-              {generalConfig.topK}
-            </div>
-          </div>
-        </ConfigItem>
-
-        <Separator className="bg-border/30" />
-
-        {/* Max Tokens */}
-        <ConfigItem label="Max Tokens" description="最大输出长度">
-          <div className="space-y-3">
-            <Slider
-              value={[generalConfig.maxTokens]}
-              onValueChange={([value]) =>
-                updateGeneralConfig('maxTokens', value)
-              }
-              min={256}
-              max={4096}
-              step={256}
-              className="w-full"
-            />
-            <div className="text-xs text-right text-muted-foreground">
-              {generalConfig.maxTokens}
-            </div>
-          </div>
-        </ConfigItem>
-      </ConfigSection>
-
       {/* 工具开关 */}
       <ConfigSection title="工具">
         <ConfigItem
-          label="Google Search"
-          description="启用实时网络搜索"
+          label="网络搜索"
+          description="启用实时网络搜索 (Tavily)"
         >
           <Switch
             checked={generalConfig.enableSearch}
@@ -133,8 +88,8 @@ function GeneralConfigPanel() {
         <Separator className="bg-border/30" />
 
         <ConfigItem
-          label="Python Sandbox"
-          description="启用代码执行环境"
+          label="代码执行"
+          description="启用 Python 代码执行环境"
         >
           <Switch
             checked={generalConfig.enablePython}
@@ -146,7 +101,7 @@ function GeneralConfigPanel() {
 
         <Separator className="bg-border/30" />
 
-        <ConfigItem label="Memory" description="启用对话记忆">
+        <ConfigItem label="对话记忆" description="启用上下文记忆">
           <Switch
             checked={generalConfig.enableMemory}
             onCheckedChange={(checked) =>
@@ -156,19 +111,11 @@ function GeneralConfigPanel() {
         </ConfigItem>
       </ConfigSection>
 
-      {/* 重置按钮 */}
-      <Button
-        variant="outline"
-        className="w-full rounded-google"
-        onClick={() => {
-          updateGeneralConfig('temperature', 0.7);
-          updateGeneralConfig('topK', 40);
-          updateGeneralConfig('topP', 0.95);
-          updateGeneralConfig('maxTokens', 2048);
-        }}
-      >
-        恢复默认设置
-      </Button>
+      {/* 高级设置说明 */}
+      <div className="text-xs text-muted-foreground text-center p-4 bg-surface-3/30 rounded-google">
+        <p>更多高级参数（如 Temperature、Top-K）</p>
+        <p className="mt-1">由后端配置统一管理</p>
+      </div>
     </div>
   );
 }
@@ -180,94 +127,9 @@ function CreativeConfigPanel() {
 
   return (
     <div className="space-y-6 py-4">
-      {/* 视频参数 */}
-      <ConfigSection title="视频参数">
-        {/* Provider 选择 */}
-        <ConfigItem label="AI Provider" description="选择视频生成引擎">
-          <Select
-            value={creativeConfig.videoProvider}
-            onValueChange={(value: any) =>
-              updateCreativeConfig('videoProvider', value)
-            }
-          >
-            <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="rounded-google">
-              <SelectItem value="runway">Runway Gen-3</SelectItem>
-              <SelectItem value="pika">Pika 1.5</SelectItem>
-              <SelectItem value="runware">Runware</SelectItem>
-            </SelectContent>
-          </Select>
-        </ConfigItem>
-
-        <Separator className="bg-border/30" />
-
-        {/* 视频时长 */}
-        <ConfigItem label="Duration" description="视频时长">
-          <Select
-            value={creativeConfig.videoDuration.toString()}
-            onValueChange={(value) =>
-              updateCreativeConfig('videoDuration', parseInt(value) as any)
-            }
-          >
-            <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="rounded-google">
-              <SelectItem value="3">3 秒</SelectItem>
-              <SelectItem value="5">5 秒 (推荐)</SelectItem>
-              <SelectItem value="10">10 秒</SelectItem>
-            </SelectContent>
-          </Select>
-        </ConfigItem>
-
-        <Separator className="bg-border/30" />
-
-        {/* 宽高比 */}
-        <ConfigItem label="Aspect Ratio" description="视频宽高比">
-          <div className="grid grid-cols-3 gap-2">
-            {(['16:9', '9:16', '1:1'] as const).map((ratio) => (
-              <Button
-                key={ratio}
-                variant={
-                  creativeConfig.videoRatio === ratio ? 'default' : 'outline'
-                }
-                size="sm"
-                onClick={() => updateCreativeConfig('videoRatio', ratio)}
-                className="rounded-google"
-              >
-                {ratio}
-              </Button>
-            ))}
-          </div>
-        </ConfigItem>
-
-        <Separator className="bg-border/30" />
-
-        {/* 质量 */}
-        <ConfigItem label="Quality" description="视频质量">
-          <Select
-            value={creativeConfig.videoQuality}
-            onValueChange={(value: any) =>
-              updateCreativeConfig('videoQuality', value)
-            }
-          >
-            <SelectTrigger className="w-full rounded-google bg-surface-3 border-border/50">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="rounded-google">
-              <SelectItem value="draft">草稿 (快速)</SelectItem>
-              <SelectItem value="standard">标准 (推荐)</SelectItem>
-              <SelectItem value="high">高清 (慢)</SelectItem>
-            </SelectContent>
-          </Select>
-        </ConfigItem>
-      </ConfigSection>
-
       {/* 风格设置 */}
-      <ConfigSection title="风格预设">
-        <ConfigItem label="Style" description="选择视觉风格">
+      <ConfigSection title="创作风格">
+        <ConfigItem label="视觉风格" description="选择分镜和视频风格">
           <Select
             value={creativeConfig.stylePreset}
             onValueChange={(value) =>
@@ -285,28 +147,16 @@ function CreativeConfigPanel() {
             </SelectContent>
           </Select>
         </ConfigItem>
-
-        <Separator className="bg-border/30" />
-
-        {/* 分镜帧数 */}
-        <ConfigItem label="Frames per Scene" description="每个场景的分镜数">
-          <div className="space-y-3">
-            <Slider
-              value={[creativeConfig.framesPerScene]}
-              onValueChange={([value]) =>
-                updateCreativeConfig('framesPerScene', value)
-              }
-              min={1}
-              max={8}
-              step={1}
-              className="w-full"
-            />
-            <div className="text-xs text-right text-muted-foreground">
-              {creativeConfig.framesPerScene} 帧
-            </div>
-          </div>
-        </ConfigItem>
       </ConfigSection>
+
+      {/* 说明 */}
+      <div className="text-xs text-muted-foreground text-center p-4 bg-surface-3/30 rounded-google space-y-2">
+        <p className="font-medium">Creative 模式说明</p>
+        <p>1. 输入视频需求描述</p>
+        <p>2. AI 自动生成脚本</p>
+        <p>3. 确认后生成分镜预览</p>
+        <p>4. 渲染生成最终视频</p>
+      </div>
     </div>
   );
 }

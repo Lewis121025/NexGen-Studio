@@ -5,14 +5,16 @@
 
 'use client';
 
-import { useEffect, Suspense } from 'react';
-import dynamic from 'next/dynamic';
-import { useStudioStore } from '@/lib/stores/studio';
-import StudioShell from '@/components/layout/StudioShell';
-import StudioHeader from '@/components/layout/StudioHeader';
-import StudioSidebar from '@/components/layout/StudioSidebar';
-import ConfigPanel from '@/components/layout/ConfigPanel';
 import { Loader2 } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import { useEffect, Suspense } from 'react';
+
+import ConfigPanel from '@/components/layout/ConfigPanel';
+import StudioHeader from '@/components/layout/StudioHeader';
+import StudioShell from '@/components/layout/StudioShell';
+import StudioSidebar from '@/components/layout/StudioSidebar';
+import { useStudioStore } from '@/lib/stores/studio';
+
 
 // 画布加载器
 function CanvasLoader() {

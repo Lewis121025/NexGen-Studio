@@ -9,7 +9,6 @@ from typing import Any
 
 from .config import TenantSandboxPolicy
 from .instrumentation import get_logger
-from .redis_cache import cache_manager
 
 logger = get_logger()
 

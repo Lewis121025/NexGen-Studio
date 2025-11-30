@@ -9,7 +9,7 @@ Write-Host ""
 
 # 1. 检查 Python 版本
 Write-Host "[1/6] 检查 Python 版本..." -ForegroundColor Yellow
-$pythonVersion = python --version 2>&1
+$pythonVersion = python3 --version 2>&1
 if ($pythonVersion -match "Python 3\.(1[1-9]|[2-9]\d)") {
     Write-Host "  ✓ Python 版本: $pythonVersion" -ForegroundColor Green
 } else {

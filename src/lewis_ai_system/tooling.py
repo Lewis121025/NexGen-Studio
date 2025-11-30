@@ -8,7 +8,7 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 from .config import settings
 from .instrumentation import TelemetryEvent, emit_event
@@ -51,14 +51,14 @@ class ToolExecutionError(RuntimeError):
 class Tool:
     """工具基类。
     
-    所有工具必须继承此类并实现 run 方法。
+    所有工具必须继承此类并实现 run 或 run_async 方法。
     """
     name: str  # 工具名称
     description: str  # 工具描述
     cost_estimate: float = 0.001  # 预估成本（美元）
 
     def run(self, payload: dict[str, Any]) -> ToolResult:  # pragma: no cover - interface
-        """执行工具。
+        """执行工具（同步版本）。
         
         Args:
             payload: 工具输入参数字典
@@ -67,9 +67,16 @@ class Tool:
             工具执行结果
             
         Raises:
-            NotImplementedError: 子类必须实现此方法
+            NotImplementedError: 子类必须实现此方法或 run_async
         """
         raise NotImplementedError
+    
+    async def run_async(self, payload: dict[str, Any]) -> ToolResult:
+        """执行工具（异步版本）。
+        
+        默认实现调用同步版本，子类可以覆盖此方法提供真正的异步实现。
+        """
+        return self.run(payload)
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -127,6 +134,13 @@ class PythonSandboxTool(Tool):
 
         return ToolResult(output=execution, cost_usd=0.01)
 
+    async def run_async(self, payload: dict[str, Any]) -> ToolResult:
+        """异步执行 Python 代码（实际执行是同步的，但不会阻塞事件循环检查）。"""
+        import asyncio
+        # 在线程池中运行同步代码，避免阻塞事件循环
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.run, payload)
+
 
 class WebSearchTool(Tool):
     """网页搜索工具，使用配置的搜索提供商。
@@ -161,20 +175,27 @@ class WebSearchTool(Tool):
         }
 
     def run(self, payload: dict[str, Any]) -> ToolResult:
+        """同步执行（仅用于非异步上下文）。"""
         import asyncio
+        try:
+            # 尝试在新事件循环中运行
+            return asyncio.run(self.run_async(payload))
+        except RuntimeError:
+            # 如果已有循环在运行，返回错误
+            return ToolResult(output={"error": "Use run_async in async context"}, cost_usd=0.0)
+
+    async def run_async(self, payload: dict[str, Any]) -> ToolResult:
+        """异步执行网页搜索。"""
         query = payload.get("query", "")
         provider_override = payload.get("provider")
         if provider_override:
             self.provider = self._provider_factory(provider_override)
         
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        result = loop.run_until_complete(self.provider.search(query))
-        return ToolResult(output={"query": query, "result": result}, cost_usd=0.01)
+            result = await self.provider.search(query)
+            return ToolResult(output={"query": query, "result": result}, cost_usd=0.01)
+        except Exception as e:
+            return ToolResult(output={"error": str(e)}, cost_usd=0.0)
 
 
 class WebScrapeTool(Tool):
@@ -210,7 +231,15 @@ class WebScrapeTool(Tool):
         }
         
     def run(self, payload: dict[str, Any]) -> ToolResult:
+        """同步执行（仅用于非异步上下文）。"""
         import asyncio
+        try:
+            return asyncio.run(self.run_async(payload))
+        except RuntimeError:
+            return ToolResult(output={"error": "Use run_async in async context"}, cost_usd=0.0)
+
+    async def run_async(self, payload: dict[str, Any]) -> ToolResult:
+        """异步执行网页抓取。"""
         url = payload.get("url")
         if not url:
             raise ToolExecutionError("web_scrape requires 'url' string input")
@@ -220,13 +249,10 @@ class WebScrapeTool(Tool):
             self.provider = self._provider_factory(provider_override)
             
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        content = loop.run_until_complete(self.provider.scrape(url))
-        return ToolResult(output={"url": url, "content": content[:5000]}, cost_usd=0.005)
+            content = await self.provider.scrape(url)
+            return ToolResult(output={"url": url, "content": content[:5000]}, cost_usd=0.005)
+        except Exception as e:
+            return ToolResult(output={"error": str(e)}, cost_usd=0.0)
 
 
 class VideoGenerationTool(Tool):
@@ -268,7 +294,15 @@ class VideoGenerationTool(Tool):
         }
 
     def run(self, payload: dict[str, Any]) -> ToolResult:
+        """同步执行（仅用于非异步上下文）。"""
         import asyncio
+        try:
+            return asyncio.run(self.run_async(payload))
+        except RuntimeError:
+            return ToolResult(output={"error": "Use run_async in async context"}, cost_usd=0.0)
+
+    async def run_async(self, payload: dict[str, Any]) -> ToolResult:
+        """异步执行视频生成任务入队。"""
         from .task_queue import task_queue
 
         prompt = payload.get("prompt")
@@ -279,7 +313,7 @@ class VideoGenerationTool(Tool):
         aspect_ratio = payload.get("aspect_ratio", "16:9")
         quality = payload.get("quality", "preview")
 
-        async def _enqueue() -> str:
+        try:
             await task_queue.connect()
             job_id = await task_queue.enqueue_generic_video(
                 {
@@ -289,16 +323,9 @@ class VideoGenerationTool(Tool):
                     "quality": quality,
                 }
             )
-            return job_id
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        task_id = loop.run_until_complete(_enqueue())
-        return ToolResult(output={"task_id": task_id, "status": "pending"})
+            return ToolResult(output={"task_id": job_id, "status": "pending"})
+        except Exception as e:
+            return ToolResult(output={"error": str(e)}, cost_usd=0.0)
 
 
 class TTSTool(Tool):
@@ -332,27 +359,28 @@ class TTSTool(Tool):
         }
 
     def run(self, payload: dict[str, Any]) -> ToolResult:
+        """同步执行（仅用于非异步上下文）。"""
         import asyncio
-        
+        try:
+            return asyncio.run(self.run_async(payload))
+        except RuntimeError:
+            return ToolResult(output={"error": "Use run_async in async context"}, cost_usd=0.0)
+
+    async def run_async(self, payload: dict[str, Any]) -> ToolResult:
+        """异步执行文本转语音。"""
         text = payload.get("text")
         if not isinstance(text, str):
             raise ToolExecutionError("text_to_speech requires 'text' string input")
         
         voice = payload.get("voice", "default")
         
-        # Run async provider call
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        result = loop.run_until_complete(self.provider.synthesize(text, voice=voice))
-        
-        # Calculate cost based on character count
-        cost = (len(text) / 1000) * self.cost_estimate
-        
-        return ToolResult(output=result, cost_usd=cost, metadata={"provider": self.provider_name})
+            result = await self.provider.synthesize(text, voice=voice)
+            # Calculate cost based on character count
+            cost = (len(text) / 1000) * self.cost_estimate
+            return ToolResult(output=result, cost_usd=cost, metadata={"provider": self.provider_name})
+        except Exception as e:
+            return ToolResult(output={"error": str(e)}, cost_usd=0.0)
 
 
 class ToolRuntime:
@@ -371,12 +399,31 @@ class ToolRuntime:
             self._tools[tool.name] = tool
 
     def execute(self, request: ToolRequest) -> ToolResult:
+        """同步执行工具（不推荐在异步上下文中使用）。"""
         tool = self._tools.get(request.name)
         if not tool:
             raise ToolExecutionError(f"Unknown tool '{request.name}'")
 
         emit_event(TelemetryEvent(name="tool_start", attributes={"tool": request.name}))
         result = tool.run(request.input)
+        emit_event(TelemetryEvent(name="tool_complete", attributes={"tool": request.name, "cost": result.cost_usd}))
+        return result
+
+    async def execute_async(self, request: ToolRequest) -> ToolResult:
+        """异步执行工具（推荐在 FastAPI 等异步框架中使用）。"""
+        tool = self._tools.get(request.name)
+        if not tool:
+            raise ToolExecutionError(f"Unknown tool '{request.name}'")
+
+        emit_event(TelemetryEvent(name="tool_start", attributes={"tool": request.name}))
+        
+        # 使用异步方法执行
+        if hasattr(tool, 'run_async'):
+            result = await tool.run_async(request.input)
+        else:
+            # 兼容没有 run_async 的工具
+            result = tool.run(request.input)
+        
         emit_event(TelemetryEvent(name="tool_complete", attributes={"tool": request.name, "cost": result.cost_usd}))
         return result
 

@@ -5,11 +5,7 @@
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { useStudioStore, selectCurrentSession } from '@/lib/stores/studio';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Send,
   Loader2,
@@ -20,19 +16,109 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useRef, useState, type JSX } from 'react';
 
-function uuid() {
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { useStudioStore, selectCurrentSession } from '@/lib/stores/studio';
+import type { Message, ToolInvocation, Session } from '@/lib/stores/types';
+import { cn } from '@/lib/utils';
+
+type SSEStatus = 'thinking' | 'processing' | 'completed' | 'error';
+
+interface BackendSessionPayload {
+  summary?: string;
+  messages?: string[];
+  tool_calls?: ToolInvocation[];
+}
+
+interface SSEPayload {
+  status?: SSEStatus;
+  message?: unknown;
+  session?: unknown;
+}
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString);
+const isToolInvocationArray = (v: unknown): v is ToolInvocation[] =>
+  Array.isArray(v) &&
+  v.every(
+    (item) =>
+      item &&
+      typeof item === 'object' &&
+      'toolName' in item &&
+      'status' in item,
+  );
+
+function parseSessionPayload(value: unknown): BackendSessionPayload | null {
+  if (!value || typeof value !== 'object') return null;
+  
+  // 后端返回格式: { session: { session: GeneralSession } } 
+  // 需要解析嵌套的 session 对象
+  let session = value as Record<string, unknown>;
+  
+  // 处理双重嵌套: response.session.session
+  if ('session' in session && session.session && typeof session.session === 'object') {
+    session = session.session as Record<string, unknown>;
+  }
+  
+  const parsed: BackendSessionPayload = {};
+  if (isString(session.summary)) parsed.summary = session.summary;
+  if (isStringArray(session.messages)) parsed.messages = session.messages;
+  
+  // 解析工具调用记录 - 后端格式与前端格式不同
+  if (Array.isArray(session.tool_calls)) {
+    parsed.tool_calls = session.tool_calls.map((tc: Record<string, unknown>) => ({
+      toolName: isString(tc.tool) ? tc.tool : 'unknown',
+      status: 'completed' as const,
+      args: tc.arguments,
+      result: tc.output,
+    }));
+  }
+  
+  return parsed;
+}
+
+// 提取 AI 回复内容
+function extractAssistantMessage(sessionData: BackendSessionPayload | null): string {
+  if (!sessionData) return '处理完成';
+  
+  // 优先使用 summary
+  if (sessionData.summary) {
+    return sessionData.summary;
+  }
+  
+  // 从 messages 中提取最后一条 Assistant 回复
+  if (sessionData.messages && sessionData.messages.length > 0) {
+    const assistantMessages = sessionData.messages.filter(
+      (msg) => msg.startsWith('Assistant:')
+    );
+    if (assistantMessages.length > 0) {
+      return assistantMessages[assistantMessages.length - 1].replace('Assistant: ', '');
+    }
+    
+    // 回退：找最后一条非用户消息
+    const aiMessages = sessionData.messages.filter(
+      (msg) => !msg.startsWith('User:') && !msg.startsWith('Goal registered:')
+    );
+    if (aiMessages.length > 0) {
+      return aiMessages[aiMessages.length - 1];
+    }
+  }
+  
+  return '处理完成';
+}
+
+function uuid(): string {
   return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export default function GeneralCanvas() {
+export default function GeneralCanvas(): JSX.Element {
   const createSession = useStudioStore((state) => state.createSession);
   const setSessionBackendId = useStudioStore(
     (state) => state.setSessionBackendId
   );
   const addMessage = useStudioStore((state) => state.addMessage);
-  const currentSessionId = useStudioStore((state) => state.currentSessionId);
   const isStreaming = useStudioStore((state) => state.isStreaming);
   const setStreaming = useStudioStore((state) => state.setStreaming);
   const currentSession = useStudioStore(selectCurrentSession);
@@ -50,13 +136,15 @@ export default function GeneralCanvas() {
     }
   }, [currentSession?.messages]);
 
-  useEffect(() => {
-    return () => {
-      if (abortRef.current) abortRef.current.abort();
-    };
-  }, []);
+  useEffect(
+    (): (() => void) =>
+      () => {
+        if (abortRef.current) abortRef.current.abort();
+      },
+    []
+  );
 
-  const ensureSession = () => {
+  const ensureSession = (): Session => {
     if (!currentSession) {
       return createSession('general', 'General Chat');
     }
@@ -72,34 +160,44 @@ export default function GeneralCanvas() {
       .sessions.find((s) => s.id === sessionId);
     if (localSession?.backendId) return localSession.backendId;
 
+    
     const res = await fetch('/api/general/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ goal, tenant_id: 'demo' }),
     });
     if (!res.ok) throw new Error('创建会话失败');
-    const data = await res.json();
-    const backendId = data?.session?.id;
-    if (!backendId) throw new Error('未获取到会话 ID');
+    const data: unknown = await res.json();
+    const backendId =
+      data &&
+      typeof data === 'object' &&
+      'session' in data &&
+      (data as { session?: unknown }).session &&
+      typeof (data as { session?: { id?: unknown } }).session === 'object'
+        ? (data as { session?: { id?: unknown } }).session?.id
+        : undefined;
+    if (!isString(backendId)) throw new Error('未获取到会话 ID');
     setSessionBackendId(sessionId, backendId);
     return backendId;
   };
 
-  const handleSSEEvent = (data: any, sessionId: string) => {
-    if (data.status === 'thinking') {
+  const handleSSEEvent = (payload: unknown, sessionId: string): void => {
+    if (!payload || typeof payload !== 'object') return;
+    const data = payload as SSEPayload;
+    const status = data.status;
+
+    if (status === 'thinking') {
       setStatusText('AI 正在思考...');
       return;
     }
-    if (data.status === 'processing') {
+    if (status === 'processing') {
       setStatusText('AI 正在调用工具...');
       return;
     }
-    if (data.status === 'completed') {
-      const sessionData = data.session;
-      const assistantText =
-        sessionData?.summary ||
-        (sessionData?.messages || []).slice(-1)[0] ||
-        '完成';
+    if (status === 'completed') {
+      const sessionData = parseSessionPayload(data.session);
+      const assistantText = extractAssistantMessage(sessionData);
+      
       addMessage(sessionId, {
         id: uuid(),
         role: 'assistant',
@@ -111,19 +209,22 @@ export default function GeneralCanvas() {
       setStatusText('');
       return;
     }
-    if (data.status === 'error') {
+    if (status === 'error') {
+      const message =
+        typeof data.message === 'string' && data.message
+          ? data.message
+          : '处理失败';
       addMessage(sessionId, {
         id: uuid(),
         role: 'assistant',
-        content: data.message || '生成失败',
+        content: message,
         timestamp: new Date(),
       });
       setStreaming(false);
       setStatusText('');
     }
   };
-
-  const handleSend = async () => {
+  const handleSend = async (): Promise<void> => {
     if (!input.trim() || isStreaming) return;
 
     const session = ensureSession();
@@ -132,7 +233,7 @@ export default function GeneralCanvas() {
     setStreaming(true);
     setStatusText('AI 正在思考...');
 
-    const userMessage = {
+    const userMessage: Message = {
       id: uuid(),
       role: 'user',
       content: text,
@@ -162,7 +263,7 @@ export default function GeneralCanvas() {
       const decoder = new TextDecoder();
       let buffer = '';
 
-      const flushEvents = (chunk: string) => {
+      const flushEvents = (chunk: string): void => {
         buffer += chunk;
         let boundary;
         while ((boundary = buffer.indexOf('\n\n')) !== -1) {
@@ -170,7 +271,7 @@ export default function GeneralCanvas() {
           buffer = buffer.slice(boundary + 2);
           if (!raw.startsWith('data:')) continue;
           try {
-            const payload = JSON.parse(raw.replace(/^data:\s*/, ''));
+            const payload: unknown = JSON.parse(raw.replace(/^data:\s*/, ''));
             handleSSEEvent(payload, session.id);
           } catch (e) {
             console.error('解析 SSE 失败', e);
@@ -187,12 +288,13 @@ export default function GeneralCanvas() {
         const chunk = decoder.decode(value, { stream: true });
         flushEvents(chunk);
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
+      const message = e instanceof Error && e.message ? e.message : '发送失败';
       addMessage(session.id, {
         id: uuid(),
         role: 'assistant',
-        content: e?.message || '发送失败',
+        content: message,
         timestamp: new Date(),
       });
       setStreaming(false);
@@ -202,14 +304,14 @@ export default function GeneralCanvas() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
-  const toggleToolExpansion = (toolId: string) => {
+  const toggleToolExpansion = (toolId: string): void => {
     setExpandedTools((prev) => {
       const next = new Set(prev);
       if (next.has(toolId)) {
@@ -227,10 +329,10 @@ export default function GeneralCanvas() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
           {!currentSession || currentSession.messages.length === 0 ? (
-            <EmptyState />
+            <EmptyState onSuggestionClick={(text) => setInput(text)} />
           ) : (
             <AnimatePresence mode="popLayout">
-              {currentSession.messages.map((message, index) => (
+              {currentSession.messages.map((message) => (
                 <motion.div
                   key={message.id}
                   initial={{ opacity: 0, y: 20 }}
@@ -298,7 +400,7 @@ export default function GeneralCanvas() {
             />
             <Button
               size="icon"
-              onClick={handleSend}
+              onClick={() => { void handleSend(); }}
               disabled={!input.trim() || isStreaming}
               className="absolute right-2 bottom-2 rounded-full bg-primary hover:bg-primary/90"
             >
@@ -320,7 +422,7 @@ export default function GeneralCanvas() {
 }
 
 // ==================== 信息气泡 ====================
-function MessageBubble({ message }: { message: any }) {
+function MessageBubble({ message }: { message: Message }): JSX.Element {
   const isUser = message.role === 'user';
 
   return (
@@ -362,11 +464,11 @@ function ToolInvocationCard({
   isExpanded,
   onToggle,
 }: {
-  tool: any;
+  tool: ToolInvocation;
   isExpanded: boolean;
   onToggle: () => void;
-}) {
-  const getToolIcon = () => {
+}): JSX.Element {
+  const getToolIcon = (): typeof Search => {
     if (tool.toolName?.includes('search')) return Search;
     if (tool.toolName?.includes('code') || tool.toolName?.includes('python'))
       return Code;
@@ -428,7 +530,7 @@ function ToolInvocationCard({
 }
 
 // ==================== 空状态 ====================
-function EmptyState() {
+function EmptyState({ onSuggestionClick }: { onSuggestionClick: (text: string) => void }): JSX.Element {
   const suggestions = [
     '解释最新的机器学习论文要点',
     '请帮我写一个 Python 脚本',
@@ -450,7 +552,8 @@ function EmptyState() {
         {suggestions.map((suggestion, index) => (
           <button
             key={index}
-            className="text-left p-4 bg-surface-2 hover:bg-surface-3 rounded-google border border-border/30 transition-colors"
+            onClick={() => onSuggestionClick(suggestion)}
+            className="text-left p-4 bg-surface-2 hover:bg-surface-3 rounded-google border border-border/30 transition-colors cursor-pointer"
           >
             <p className="text-sm text-foreground">{suggestion}</p>
           </button>

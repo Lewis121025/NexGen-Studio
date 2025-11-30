@@ -10,7 +10,7 @@ async def test_parallel_storyboard_generation():
     # Setup
     orchestrator = CreativeOrchestrator()
     
-    # Mock project
+# Mock project
     project = MagicMock(spec=CreativeProject)
     project.id = "test_project"
     project.script = "Scene 1\n\nScene 2\n\nScene 3"
@@ -18,6 +18,13 @@ async def test_parallel_storyboard_generation():
     project.budget_limit_usd = 100.0
     project.cost_usd = 0.0
     project.auto_pause_enabled = False
+    # 添加一致性相关属性
+    project.consistency_seed = 12345
+    project.consistency_level = "medium"
+    project.reference_images = []
+    project.character_reference = None
+    project.scene_reference = None
+    project.style = "cinematic"
     
     # Mock repository
     orchestrator.repository = AsyncMock()
